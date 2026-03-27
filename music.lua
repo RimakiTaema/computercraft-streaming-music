@@ -46,6 +46,14 @@ if #speakers == 0 then
 	error("No speakers attached. You need to connect a speaker to this computer. If this is an Advanced Noisy Pocket Computer, then this is a bug, and you should try restarting your Minecraft game.", 0)
 end
 
+if api_base_url == "SetMe" then
+	error("Please provide API base URL before using. Edit music.lua and set api_base_url.", 0)
+end
+
+if string.sub(api_base_url, -1) ~= "/" then
+	api_base_url = api_base_url .. "/"
+end
+
 local function ellipsize(text, max_len)
 	local value = tostring(text or "")
 	if max_len <= 0 then
