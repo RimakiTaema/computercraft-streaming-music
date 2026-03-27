@@ -1,6 +1,15 @@
 import fetch from "node-fetch";
 import { spawn } from "node:child_process";
 import { pipeline } from "node:stream/promises";
+import { accessSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const COOKIES_PATH = join(__dirname, "cookies.txt");
+let hasCookies = false;
+try { accessSync(COOKIES_PATH); hasCookies = true; } catch { /* no cookies */ }
+console.log(`[init] cookies.txt: ${hasCookies ? "found" : "not found"}`);
 
 const DEFAULT_RAPIDAPI_KEYS = ["YOUR API KEY HERE"];
 const RAPIDAPI_KEYS = (process.env.RAPIDAPI_API_KEYS || "")
@@ -65,12 +74,14 @@ async function handleAudioDownload(id, res) {
 
   return new Promise((resolve, reject) => {
     // yt-dlp: extract best audio, output raw audio to stdout
-    const ytdlp = spawn("yt-dlp", [
-      "-f", "bestaudio",
-      "--no-playlist",
-      "-o", "-",
-      videoUrl,
-    ], { stdio: ["ignore", "pipe", "pipe"] });
+    const ytdlpArgs = ["-f", "bestaudio", "--no-playlist", "-o", "-"];
+    if (hasCookies) {
+      ytdlpArgs.push("--cookies", COOKIES_PATH);
+      console.log("[dl] using cookies.txt");
+    }
+    ytdlpArgs.push(videoUrl);
+
+    const ytdlp = spawn("yt-dlp", ytdlpArgs, { stdio: ["ignore", "pipe", "pipe"] });
 
     // ffmpeg: convert to DFPWM for ComputerCraft
     const ffmpeg = spawn("ffmpeg", [
