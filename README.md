@@ -1,12 +1,12 @@
 # Streaming music in Minecraft (ComputerCraft CC: Tweaked mod)
 
-**Version:** 2.1
+**Version:** vibe-1.0
 
-**Install:** `pastebin get Rc1PCzLH music`
+**Install:** `pastebin ----`
 
-To update from the original version, run `delete music` first.
+To update from the original version, run `delete vibbedmusic` first.
 
-**Run:** `music`
+**Run:** `vibbedmusic`
 
 ## How to use
 
