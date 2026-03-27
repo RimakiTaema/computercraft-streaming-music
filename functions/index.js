@@ -13,6 +13,7 @@ const rapidapi_api_keys = RAPIDAPI_KEYS.length > 0 ? RAPIDAPI_KEYS : DEFAULT_RAP
 const YT_API_BASE = "https://yt-api.p.rapidapi.com";
 const REQUEST_TIMEOUT_MS = 20000;
 const API_VERSION = "2.2.1_vibe";
+const API_BUILD = "vibecoded";
 const GITHUB_OWNER = process.env.GITHUB_OWNER || "AngryManTV";
 const GITHUB_REPO = process.env.GITHUB_REPO || "computercraft-streaming-music";
 const GITHUB_CHANGELOG_DIR = process.env.GITHUB_CHANGELOG_DIR || "changelog";
@@ -20,7 +21,7 @@ const GITHUB_CHANGELOG_DIR = process.env.GITHUB_CHANGELOG_DIR || "changelog";
 export const ipod = onRequest({ memory: "512MiB", maxInstances: 3, cors: true }, async (req, res) => {
   try {
     res.setHeader("X-IPod-Version", API_VERSION);
-    res.setHeader("X-IPod-Build", "vibecoded");
+    res.setHeader("X-IPod-Build", API_BUILD);
 
     if (req.method !== "GET") {
       return res.status(405).send("Method not allowed");
