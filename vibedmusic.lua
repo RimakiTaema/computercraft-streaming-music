@@ -1,4 +1,4 @@
-local api_base_url = "https://ipod-2to6magyna-uc.a.run.app/"
+local api_base_url = "SetMe"
 local version = "2.1"
 
 local width, height = term.getSize()
@@ -36,6 +36,9 @@ local speakers = { peripheral.find("speaker") }
 if #speakers == 0 then
 	error("No speakers attached. You need to connect a speaker to this computer. If this is an Advanced Noisy Pocket Computer, then this is a bug, and you should try restarting your Minecraft game.", 0)
 end
+
+if api_base_url == "SetMe" then
+	error(Please Provide API Base URL Before Using / Edit using edit vibedmusic)
 
 local function ellipsize(text, max_len)
 	local value = tostring(text or "")
