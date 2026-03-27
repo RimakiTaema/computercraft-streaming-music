@@ -62,12 +62,11 @@ export async function ipodHandler(req, res) {
 async function handleAudioDownload(id, res) {
   const json = await makeAPIRequestWithRetries(`${YT_API_BASE}/dl?id=${encodeURIComponent(id)}&cgeo=US`);
   console.log(`[dl] API response keys: ${json ? Object.keys(json).join(", ") : "null"}`);
-  console.log(`[dl] formats count: ${Array.isArray(json?.formats) ? json.formats.length : "none"}`);
-  if (Array.isArray(json?.formats)) {
-    json.formats.forEach((f, i) => console.log(`[dl] format[${i}]: mime=${f?.mimeType?.slice(0, 40)} bitrate=${f?.audioBitrate} hasUrl=${!!f?.url}`));
-  }
+  console.log(`[dl] formats: ${Array.isArray(json?.formats) ? json.formats.length : 0}, adaptiveFormats: ${Array.isArray(json?.adaptiveFormats) ? json.adaptiveFormats.length : 0}`);
 
-  const url = pickPlayableFormatUrl(json && json.formats);
+  // Prefer audio-only from adaptiveFormats, fall back to combined formats
+  const allFormats = [...(json?.adaptiveFormats || []), ...(json?.formats || [])];
+  const url = pickPlayableFormatUrl(allFormats);
   console.log(`[dl] picked url: ${url ? url.slice(0, 80) + "..." : "null"}`);
 
   if (!url) {
@@ -216,10 +215,23 @@ function pickPlayableFormatUrl(formats) {
     return null;
   }
 
-  const sorted = [...formats]
-    .filter((format) => format && typeof format.url === "string")
-    .sort((a, b) => Number((b && b.audioBitrate) || 0) - Number((a && a.audioBitrate) || 0));
+  const withUrl = formats.filter((f) => f && typeof f.url === "string");
 
+  // Prefer audio-only formats (from adaptiveFormats)
+  const audioOnly = withUrl
+    .filter((f) => f.mimeType && f.mimeType.startsWith("audio/"))
+    .sort((a, b) => Number(b.bitrate || b.audioBitrate || 0) - Number(a.bitrate || a.audioBitrate || 0));
+
+  if (audioOnly.length > 0) {
+    console.log(`[dl] using audio-only: ${audioOnly[0].mimeType} bitrate=${audioOnly[0].bitrate || audioOnly[0].audioBitrate}`);
+    return audioOnly[0].url;
+  }
+
+  // Fall back to any format with audio
+  const sorted = withUrl.sort((a, b) => Number(b.audioBitrate || 0) - Number(a.audioBitrate || 0));
+  if (sorted[0]) {
+    console.log(`[dl] fallback format: ${sorted[0].mimeType} audioBitrate=${sorted[0].audioBitrate}`);
+  }
   return (sorted[0] && sorted[0].url) || null;
 }
 
