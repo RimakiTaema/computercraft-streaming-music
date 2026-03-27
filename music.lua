@@ -1,4 +1,4 @@
-local api_base_url = "https://ipod-2to6magyna-uc.a.run.app/"
+local api_base_url = "SetMe"
 -- Versioning:
 -- X.X.1 => Minor change (usually no forced client update unless bugfix needed)
 -- X.1.X => Medium change (client update recommended if behavior changes)
@@ -47,7 +47,7 @@ if #speakers == 0 then
 end
 
 if api_base_url == "SetMe" then
-	error("Please provide API base URL before using. Edit music.lua and set api_base_url.", 0)
+	error("Please Provide API Base URL Before Using / Edit using edit vibedmusic", 0)
 end
 
 if string.sub(api_base_url, -1) ~= "/" then
