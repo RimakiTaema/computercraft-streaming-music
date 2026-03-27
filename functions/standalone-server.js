@@ -1,6 +1,8 @@
 #!/usr/bin/env node
+// Standalone Express server — no Firebase dependency.
+// Works on Spark (free) plan or any host (Railway, Render, Fly.io, etc).
 import express from "express";
-import { ipodHandler } from "./index.js";
+import { ipodHandler } from "./handler.js";
 
 const app = express();
 const port = Number(process.env.PORT || 8080);

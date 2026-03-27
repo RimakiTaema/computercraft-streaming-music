@@ -47,7 +47,7 @@ if #speakers == 0 then
 end
 
 if api_base_url == "SetMe" then
-	error("Please Provide API Base URL Before Using / Edit using edit vibedmusic", 0)
+	error("Please Provide API Base URL Before Using / Edit using: edit music", 0)
 end
 
 if string.sub(api_base_url, -1) ~= "/" then
