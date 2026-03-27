@@ -1,5 +1,5 @@
 import fetch from "node-fetch";
-import prism from "prism-media";
+import { spawn } from "node:child_process";
 import { pipeline } from "node:stream/promises";
 
 const DEFAULT_RAPIDAPI_KEYS = ["YOUR API KEY HERE"];
@@ -60,40 +60,74 @@ export async function ipodHandler(req, res) {
 }
 
 async function handleAudioDownload(id, res) {
-  const json = await makeAPIRequestWithRetries(`${YT_API_BASE}/dl?id=${encodeURIComponent(id)}&cgeo=US`);
-  console.log(`[dl] API response keys: ${json ? Object.keys(json).join(", ") : "null"}`);
-  console.log(`[dl] formats: ${Array.isArray(json?.formats) ? json.formats.length : 0}, adaptiveFormats: ${Array.isArray(json?.adaptiveFormats) ? json.adaptiveFormats.length : 0}`);
+  const videoUrl = `https://www.youtube.com/watch?v=${encodeURIComponent(id)}`;
+  console.log(`[dl] starting yt-dlp + ffmpeg pipeline for ${id}`);
 
-  // Prefer audio-only from adaptiveFormats, fall back to combined formats
-  const allFormats = [...(json?.adaptiveFormats || []), ...(json?.formats || [])];
-  const url = pickPlayableFormatUrl(allFormats);
-  console.log(`[dl] picked url: ${url ? url.slice(0, 80) + "..." : "null"}`);
+  return new Promise((resolve, reject) => {
+    // yt-dlp: extract best audio, output raw audio to stdout
+    const ytdlp = spawn("yt-dlp", [
+      "-f", "bestaudio",
+      "--no-playlist",
+      "-o", "-",
+      videoUrl,
+    ], { stdio: ["ignore", "pipe", "pipe"] });
 
-  if (!url) {
-    return res.status(502).send("Error 502");
-  }
+    // ffmpeg: convert to DFPWM for ComputerCraft
+    const ffmpeg = spawn("ffmpeg", [
+      "-i", "pipe:0",
+      "-analyzeduration", "0",
+      "-loglevel", "warning",
+      "-f", "dfpwm",
+      "-ar", "48000",
+      "-ac", "1",
+      "pipe:1",
+    ], { stdio: ["pipe", "pipe", "pipe"] });
 
-  const response = await fetchWithTimeout(url, {
-    method: "GET",
-    headers: {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-      "Referer": "https://www.youtube.com/",
-      "Origin": "https://www.youtube.com",
-    },
+    let ytdlpStderr = "";
+    let ffmpegStderr = "";
+
+    ytdlp.stderr.on("data", (chunk) => { ytdlpStderr += chunk.toString(); });
+    ffmpeg.stderr.on("data", (chunk) => { ffmpegStderr += chunk.toString(); });
+
+    // Pipe: yt-dlp stdout -> ffmpeg stdin -> response
+    ytdlp.stdout.pipe(ffmpeg.stdin);
+
+    res.setHeader("Content-Type", "application/octet-stream");
+    res.setHeader("Cache-Control", "no-store");
+
+    ffmpeg.stdout.pipe(res);
+
+    ytdlp.on("error", (err) => {
+      console.error("[dl] yt-dlp spawn error:", err.message);
+      if (!res.headersSent) res.status(502).send("Error 502");
+      resolve();
+    });
+
+    ffmpeg.on("error", (err) => {
+      console.error("[dl] ffmpeg spawn error:", err.message);
+      if (!res.headersSent) res.status(502).send("Error 502");
+      resolve();
+    });
+
+    ytdlp.on("close", (code) => {
+      if (code !== 0) {
+        console.error(`[dl] yt-dlp exited with code ${code}: ${ytdlpStderr.slice(0, 500)}`);
+        ffmpeg.stdin.end();
+      } else {
+        console.log("[dl] yt-dlp finished ok");
+      }
+    });
+
+    ffmpeg.on("close", (code) => {
+      if (code !== 0) {
+        console.error(`[dl] ffmpeg exited with code ${code}: ${ffmpegStderr.slice(0, 500)}`);
+        if (!res.headersSent) res.status(502).send("Error 502");
+      } else {
+        console.log("[dl] ffmpeg transcode finished ok");
+      }
+      resolve();
+    });
   });
-  console.log(`[dl] audio fetch status=${response.status} ok=${response.ok} hasBody=${!!response.body}`);
-  if (!response.ok || !response.body) {
-    return res.status(502).send("Error 502");
-  }
-
-  const transcoder = new prism.FFmpeg({
-    args: ["-analyzeduration", "0", "-loglevel", "0", "-f", "dfpwm", "-ar", "48000", "-ac", "1"],
-  });
-
-  res.setHeader("Content-Type", "application/octet-stream");
-  res.setHeader("Cache-Control", "no-store");
-
-  await pipeline(response.body, transcoder, res);
 }
 
 async function handleSearch(search, res, requestMajor) {
@@ -217,30 +251,6 @@ function respondWithLatin1Json(res, payload) {
   return res.status(200).send(Buffer.from(JSON.stringify(payload), "latin1"));
 }
 
-function pickPlayableFormatUrl(formats) {
-  if (!Array.isArray(formats)) {
-    return null;
-  }
-
-  const withUrl = formats.filter((f) => f && typeof f.url === "string");
-
-  // Prefer audio-only formats (from adaptiveFormats)
-  const audioOnly = withUrl
-    .filter((f) => f.mimeType && f.mimeType.startsWith("audio/"))
-    .sort((a, b) => Number(b.bitrate || b.audioBitrate || 0) - Number(a.bitrate || a.audioBitrate || 0));
-
-  if (audioOnly.length > 0) {
-    console.log(`[dl] using audio-only: ${audioOnly[0].mimeType} bitrate=${audioOnly[0].bitrate || audioOnly[0].audioBitrate}`);
-    return audioOnly[0].url;
-  }
-
-  // Fall back to any format with audio
-  const sorted = withUrl.sort((a, b) => Number(b.audioBitrate || 0) - Number(a.audioBitrate || 0));
-  if (sorted[0]) {
-    console.log(`[dl] fallback format: ${sorted[0].mimeType} audioBitrate=${sorted[0].audioBitrate}`);
-  }
-  return (sorted[0] && sorted[0].url) || null;
-}
 
 function replaceNonExtendedASCII(str) {
   return String(str || "")
