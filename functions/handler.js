@@ -21,8 +21,9 @@ const rapidapi_api_keys = RAPIDAPI_KEYS.length > 0 ? RAPIDAPI_KEYS : DEFAULT_RAP
 console.log(`[init] ${rapidapi_api_keys.length} API key(s) loaded, first key starts with: ${rapidapi_api_keys[0]?.slice(0, 8)}...`);
 const YT_API_BASE = "https://yt-api.p.rapidapi.com";
 const REQUEST_TIMEOUT_MS = 20000;
-const API_VERSION = "2.2.1_vibe";
+const API_VERSION = "3.0.0_vibe";
 const API_BUILD = "vibecoded";
+const HAS_RAPIDAPI = RAPIDAPI_KEYS.length > 0 && RAPIDAPI_KEYS[0] !== "YOUR API KEY HERE";
 const GITHUB_OWNER = process.env.GITHUB_OWNER || "AngryManTV";
 const GITHUB_REPO = process.env.GITHUB_REPO || "computercraft-streaming-music";
 const GITHUB_CHANGELOG_DIR = process.env.GITHUB_CHANGELOG_DIR || "changelog";
@@ -145,61 +146,123 @@ async function handleSearch(search, res, requestMajor) {
   const youtube_id_parts = search.match(/((?:https?:)?\/\/)?((?:www|m|music)\.)?((?:youtube\.com|youtu.be))(\/(?:[\w\-]+\?v=|embed\/|v\/)?)([\w\-]+)(\S+)?$/);
   const youtube_id_match = youtube_id_parts && youtube_id_parts[5];
   if (youtube_id_match && youtube_id_match.length === 11) {
-    const item = await makeAPIRequestWithRetries(`${YT_API_BASE}/video/info?id=${youtube_id_match}`);
+    // Single video lookup — try RapidAPI, fallback to yt-dlp
+    try {
+      if (HAS_RAPIDAPI) {
+        const item = await makeAPIRequestWithRetries(`${YT_API_BASE}/video/info?id=${youtube_id_match}`);
+        if (item && item.title) {
+          console.log("[search] video info via RapidAPI ok");
+          return respondWithLatin1Json(res, [{
+            id: item.id,
+            name: replaceNonExtendedASCII(item.title),
+            artist: `${toHMS(Number(item.lengthSeconds || 0))} · ${replaceNonExtendedASCII((item.channelTitle || "Unknown Artist").split(" - Topic")[0])}`,
+          }]);
+        }
+      }
+    } catch (err) {
+      console.warn(`[search] RapidAPI video info failed, falling back to yt-dlp: ${err.message}`);
+    }
 
-    return respondWithLatin1Json(
-      res,
-      !item || !item.title
-        ? []
-        : [
-            {
-              id: item.id,
-              name: replaceNonExtendedASCII(item.title),
-              artist: `${toHMS(Number(item.lengthSeconds || 0))} · ${replaceNonExtendedASCII((item.channelTitle || "Unknown Artist").split(" - Topic")[0])}`,
-            },
-          ]
-    );
+    // Fallback: yt-dlp --dump-json
+    try {
+      const info = await ytdlpGetInfo(`https://www.youtube.com/watch?v=${youtube_id_match}`);
+      if (info) {
+        console.log("[search] video info via yt-dlp fallback ok");
+        return respondWithLatin1Json(res, [{
+          id: info.id,
+          name: replaceNonExtendedASCII(info.title || "Unknown"),
+          artist: `${toHMS(Number(info.duration || 0))} · ${replaceNonExtendedASCII((info.channel || info.uploader || "Unknown Artist").split(" - Topic")[0])}`,
+        }]);
+      }
+    } catch (err2) {
+      console.error(`[search] yt-dlp video info fallback also failed: ${err2.message}`);
+    }
+
+    return respondWithLatin1Json(res, []);
   }
 
   const youtube_playlist_parts = search.match(/((?:https?:)?\/\/)?((?:www|m|music)\.)?((?:youtube\.com|youtu.be))\/playlist(\S+)list=([\w\-]+)(\S+)?$/);
   const youtube_playlist_match = youtube_playlist_parts && youtube_playlist_parts[5];
   if (youtube_playlist_match && youtube_playlist_match.length === 34 && requestMajor >= 2) {
-    const item = await makeAPIRequestWithRetries(`${YT_API_BASE}/playlist?id=${youtube_playlist_match}`);
+    // Playlist lookup — try RapidAPI, fallback to yt-dlp
+    try {
+      if (HAS_RAPIDAPI) {
+        const item = await makeAPIRequestWithRetries(`${YT_API_BASE}/playlist?id=${youtube_playlist_match}`);
+        if (item && !item.error && item.data && item.data.length > 0) {
+          console.log("[search] playlist via RapidAPI ok");
+          return respondWithLatin1Json(res, [{
+            id: item.meta.playlistId,
+            name: replaceNonExtendedASCII(item.meta.title),
+            artist: `Playlist · ${item.meta.videoCount} videos · ${replaceNonExtendedASCII(item.meta.channelTitle)}`,
+            type: "playlist",
+            playlist_items: item.data.map((pi) => ({
+              id: pi.videoId,
+              name: replaceNonExtendedASCII(pi.title),
+              artist: `${pi.lengthText || "0:00"} · ${replaceNonExtendedASCII((pi.channelTitle || "Unknown Artist").split(" - Topic")[0])}`,
+            })),
+          }]);
+        }
+      }
+    } catch (err) {
+      console.warn(`[search] RapidAPI playlist failed, falling back to yt-dlp: ${err.message}`);
+    }
 
-    return respondWithLatin1Json(
-      res,
-      !item || item.error || !item.data || item.data.length === 0
-        ? []
-        : [
-            {
-              id: item.meta.playlistId,
-              name: replaceNonExtendedASCII(item.meta.title),
-              artist: `Playlist · ${item.meta.videoCount} videos · ${replaceNonExtendedASCII(item.meta.channelTitle)}`,
-              type: "playlist",
-              playlist_items: item.data.map((playlistItem) => ({
-                id: playlistItem.videoId,
-                name: replaceNonExtendedASCII(playlistItem.title),
-                artist: `${playlistItem.lengthText || "0:00"} · ${replaceNonExtendedASCII((playlistItem.channelTitle || "Unknown Artist").split(" - Topic")[0])}`,
-              })),
-            },
-          ]
-    );
+    // Fallback: yt-dlp playlist
+    try {
+      const items = await ytdlpGetPlaylist(`https://www.youtube.com/playlist?list=${youtube_playlist_match}`);
+      if (items && items.length > 0) {
+        console.log(`[search] playlist via yt-dlp fallback ok (${items.length} items)`);
+        return respondWithLatin1Json(res, [{
+          id: youtube_playlist_match,
+          name: replaceNonExtendedASCII(items[0]._playlist_title || "Playlist"),
+          artist: `Playlist · ${items.length} videos`,
+          type: "playlist",
+          playlist_items: items.map((pi) => ({
+            id: pi.id,
+            name: replaceNonExtendedASCII(pi.title || "Unknown"),
+            artist: `${toHMS(Number(pi.duration || 0))} · ${replaceNonExtendedASCII((pi.channel || pi.uploader || "Unknown Artist").split(" - Topic")[0])}`,
+          })),
+        }]);
+      }
+    } catch (err2) {
+      console.error(`[search] yt-dlp playlist fallback also failed: ${err2.message}`);
+    }
+
+    return respondWithLatin1Json(res, []);
   }
 
-  const json = await makeAPIRequestWithRetries(
-    `${YT_API_BASE}/search?query=${encodeURIComponent(search.split("+").join(" "))}&type=video`
-  );
+  // Text search — try RapidAPI, fallback to yt-dlp ytsearch
+  try {
+    if (HAS_RAPIDAPI) {
+      const json = await makeAPIRequestWithRetries(
+        `${YT_API_BASE}/search?query=${encodeURIComponent(search.split("+").join(" "))}&type=video`
+      );
+      const results = ((json && json.data) || [])
+        .filter((item) => item && item.type === "video")
+        .map((item) => ({
+          id: item.videoId,
+          name: replaceNonExtendedASCII(item.title),
+          artist: `${item.lengthText || "0:00"} · ${replaceNonExtendedASCII((item.channelTitle || "Unknown Artist").split(" - Topic")[0])}`,
+        }));
+      if (results.length > 0) {
+        console.log(`[search] text search via RapidAPI ok (${results.length} results)`);
+        return respondWithLatin1Json(res, results);
+      }
+    }
+  } catch (err) {
+    console.warn(`[search] RapidAPI text search failed, falling back to yt-dlp: ${err.message}`);
+  }
 
-  return respondWithLatin1Json(
-    res,
-    ((json && json.data) || [])
-      .filter((item) => item && item.type === "video")
-      .map((item) => ({
-        id: item.videoId,
-        name: replaceNonExtendedASCII(item.title),
-        artist: `${item.lengthText || "0:00"} · ${replaceNonExtendedASCII((item.channelTitle || "Unknown Artist").split(" - Topic")[0])}`,
-      }))
-  );
+  // Fallback: yt-dlp ytsearch
+  try {
+    const results = await ytdlpSearch(search);
+    console.log(`[search] text search via yt-dlp fallback ok (${results.length} results)`);
+    return respondWithLatin1Json(res, results);
+  } catch (err2) {
+    console.error(`[search] yt-dlp search fallback also failed: ${err2.message}`);
+  }
+
+  return respondWithLatin1Json(res, []);
 }
 
 async function handleChangelogRequest(res) {
@@ -208,8 +271,8 @@ async function handleChangelogRequest(res) {
 }
 
 async function makeAPIRequestWithRetries(url) {
-  if (rapidapi_api_keys.length === 0 || rapidapi_api_keys[0] === "YOUR API KEY HERE") {
-    throw new Error("RapidAPI key is not configured");
+  if (!HAS_RAPIDAPI) {
+    throw new Error("RapidAPI key is not configured — will use yt-dlp fallback");
   }
 
   const max_attempts = 3;
@@ -289,6 +352,79 @@ function toHMS(totalSeconds) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// yt-dlp fallback helpers
+
+function ytdlpExec(args) {
+  return new Promise((resolve, reject) => {
+    const fullArgs = [...args];
+    if (hasCookies) fullArgs.push("--cookies", COOKIES_PATH);
+
+    const proc = spawn("yt-dlp", fullArgs, { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+
+    proc.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
+    proc.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+
+    const timeout = setTimeout(() => {
+      proc.kill("SIGTERM");
+      reject(new Error("yt-dlp timed out after 30s"));
+    }, 30000);
+
+    proc.on("close", (code) => {
+      clearTimeout(timeout);
+      if (code !== 0) {
+        reject(new Error(`yt-dlp exited ${code}: ${stderr.slice(0, 300)}`));
+      } else {
+        resolve(stdout);
+      }
+    });
+
+    proc.on("error", (err) => {
+      clearTimeout(timeout);
+      reject(err);
+    });
+  });
+}
+
+async function ytdlpGetInfo(url) {
+  const output = await ytdlpExec(["--dump-json", "--no-playlist", "--skip-download", url]);
+  return JSON.parse(output);
+}
+
+async function ytdlpGetPlaylist(url) {
+  const output = await ytdlpExec(["--dump-json", "--flat-playlist", "--skip-download", url]);
+  // Each line is a separate JSON object
+  const items = output.trim().split("\n").filter(Boolean).map((line) => {
+    const parsed = JSON.parse(line);
+    return {
+      id: parsed.id,
+      title: parsed.title,
+      duration: parsed.duration,
+      channel: parsed.channel || parsed.uploader,
+      _playlist_title: parsed.playlist_title,
+    };
+  });
+  return items;
+}
+
+async function ytdlpSearch(query, count = 10) {
+  const output = await ytdlpExec([
+    `ytsearch${count}:${query}`,
+    "--dump-json",
+    "--flat-playlist",
+    "--skip-download",
+  ]);
+  return output.trim().split("\n").filter(Boolean).map((line) => {
+    const item = JSON.parse(line);
+    return {
+      id: item.id,
+      name: replaceNonExtendedASCII(item.title || "Unknown"),
+      artist: `${toHMS(Number(item.duration || 0))} · ${replaceNonExtendedASCII((item.channel || item.uploader || "Unknown Artist").split(" - Topic")[0])}`,
+    };
+  });
 }
 
 async function fetchChangelogsFromGitHub() {
