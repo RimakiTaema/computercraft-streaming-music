@@ -3,7 +3,7 @@ local api_base_url = "SetMe"
 -- X.X.1 => Minor change (usually no forced client update unless bugfix needed)
 -- X.1.X => Medium change (client update recommended if behavior changes)
 -- 1.X.X => Major change (client update required)
-local version = "3.0.0_vibe"
+local version = "3.1.0_vibe"
 
 local width, height = term.getSize()
 local tab = 1
@@ -87,6 +87,54 @@ local C_SEARCH_PH = colors.lightGray
 local speakers = { peripheral.find("speaker") }
 if #speakers == 0 then
 	error("No speakers attached. Connect a speaker to this computer.", 0)
+end
+
+-- Monitor auto-detect: mirror display to attached monitor
+local monitor = peripheral.find("monitor")
+local original_term = term.current()
+if monitor then
+	monitor.setTextScale(0.5)
+	local mw, mh = monitor.getSize()
+	-- Only use monitor if it's big enough
+	if mw >= 29 and mh >= 12 then
+		-- Create a multi-output terminal that writes to both screen and monitor
+		local function makeMultiTerm(primary, secondary)
+			local multi = {}
+			-- Methods that need to go to both outputs
+			local mirror_methods = {
+				"write", "clear", "clearLine", "setCursorPos",
+				"setTextColor", "setTextColour", "setBackgroundColor",
+				"setBackgroundColour", "setCursorBlink", "scroll",
+			}
+			for _, method in ipairs(mirror_methods) do
+				multi[method] = function(...)
+					secondary[method](...)
+					return primary[method](...)
+				end
+			end
+			-- Methods that only query from primary
+			local primary_only = {
+				"getSize", "getCursorPos", "isColor", "isColour",
+				"getTextColor", "getTextColour", "getBackgroundColor",
+				"getBackgroundColour", "getCursorBlink",
+			}
+			for _, method in ipairs(primary_only) do
+				multi[method] = function(...)
+					return primary[method](...)
+				end
+			end
+			-- blit goes to both
+			multi.blit = function(...)
+				secondary.blit(...)
+				return primary.blit(...)
+			end
+			return multi
+		end
+		local multiTerm = makeMultiTerm(original_term, monitor)
+		term.redirect(multiTerm)
+		-- Re-read size from the computer terminal (not monitor)
+		width, height = original_term.getSize()
+	end
 end
 
 if api_base_url == "SetMe" then
@@ -1068,24 +1116,33 @@ function handleSearchResultMenuClick(x, y)
 		-- Play now
 		flashButton(2, 6, "Play now")
 		in_search_result = false
-		for _, speaker in ipairs(speakers) do
-			speaker.stop()
+		-- Stop current playback first
+		if playing then
+			for _, speaker in ipairs(speakers) do
+				speaker.stop()
+			end
 			os.queueEvent("playback_stopped")
 		end
-		playing = true
-		is_error = false
+		-- Reset state fully before starting new song
 		playing_id = nil
-		if item.type == "playlist" and item.playlist_items then
+		playing_status = 0
+		is_loading = false
+		is_error = false
+		clearVisualizer()
+		if item.type == "playlist" and item.playlist_items and #item.playlist_items > 0 then
 			now_playing = item.playlist_items[1]
 			queue = {}
+			queue_scroll = 0
 			for i = 2, #item.playlist_items do
 				table.insert(queue, item.playlist_items[i])
 			end
 		else
 			now_playing = item
 		end
+		playing = true
 		tab = 1
 		os.queueEvent("audio_update")
+		os.queueEvent("redraw_screen")
 	elseif y == 8 then
 		-- Play next
 		flashButton(2, 8, "Play next")
@@ -1098,6 +1155,7 @@ function handleSearchResultMenuClick(x, y)
 			table.insert(queue, 1, item)
 		end
 		os.queueEvent("audio_update")
+		os.queueEvent("redraw_screen")
 	elseif y == 10 then
 		-- Add to queue
 		flashButton(2, 10, "Add to queue")
@@ -1110,6 +1168,7 @@ function handleSearchResultMenuClick(x, y)
 			table.insert(queue, item)
 		end
 		os.queueEvent("audio_update")
+		os.queueEvent("redraw_screen")
 	else
 		-- Any other click (including y==13 Cancel, or clicking empty space) dismisses the overlay
 		in_search_result = false

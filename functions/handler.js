@@ -21,7 +21,7 @@ const rapidapi_api_keys = RAPIDAPI_KEYS.length > 0 ? RAPIDAPI_KEYS : DEFAULT_RAP
 console.log(`[init] ${rapidapi_api_keys.length} API key(s) loaded, first key starts with: ${rapidapi_api_keys[0]?.slice(0, 8)}...`);
 const YT_API_BASE = "https://yt-api.p.rapidapi.com";
 const REQUEST_TIMEOUT_MS = 20000;
-const API_VERSION = "3.0.0_vibe";
+const API_VERSION = "3.1.0_vibe";
 const API_BUILD = "vibecoded";
 const HAS_RAPIDAPI = RAPIDAPI_KEYS.length > 0 && RAPIDAPI_KEYS[0] !== "YOUR API KEY HERE";
 const GITHUB_OWNER = process.env.GITHUB_OWNER || "AngryManTV";
