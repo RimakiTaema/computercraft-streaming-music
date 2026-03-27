@@ -2,6 +2,11 @@
 
 **Version:** vibe-1.0
 
+
+## This Fork Heavently AI Codded Use AT YOUR OWN RISK
+&&&
+### This Ver No Server To pull Self Host ONLY
+
 **Install:** `pastebin ----`
 
 To update from the original version, run `delete vibbedmusic` first.
