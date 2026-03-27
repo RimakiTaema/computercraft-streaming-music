@@ -3,8 +3,8 @@
 > [!WARNING]  
 > **This is an AI-generated fork.** This code was entirely written with AI assistance and is not affiliated with the original project. Use at your own risk.
 
-> [!NOTICE]
-> This Fork Is no Original Server Usage And No Server Provided For This Fork. Please Run At your own risk
+> [!CAUTION]
+> This Fork Is no longer Using Original YTAPI Server And No Server Provided For This Fork. Please Run At your own risk
 
 **Version:** vibe-1.0
 
