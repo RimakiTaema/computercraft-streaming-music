@@ -73,7 +73,14 @@ async function handleAudioDownload(id, res) {
     return res.status(502).send("Error 502");
   }
 
-  const response = await fetchWithTimeout(url, { method: "GET" });
+  const response = await fetchWithTimeout(url, {
+    method: "GET",
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "Referer": "https://www.youtube.com/",
+      "Origin": "https://www.youtube.com",
+    },
+  });
   console.log(`[dl] audio fetch status=${response.status} ok=${response.ok} hasBody=${!!response.body}`);
   if (!response.ok || !response.body) {
     return res.status(502).send("Error 502");
