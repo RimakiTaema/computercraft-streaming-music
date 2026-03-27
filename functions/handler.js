@@ -61,13 +61,21 @@ export async function ipodHandler(req, res) {
 
 async function handleAudioDownload(id, res) {
   const json = await makeAPIRequestWithRetries(`${YT_API_BASE}/dl?id=${encodeURIComponent(id)}&cgeo=US`);
+  console.log(`[dl] API response keys: ${json ? Object.keys(json).join(", ") : "null"}`);
+  console.log(`[dl] formats count: ${Array.isArray(json?.formats) ? json.formats.length : "none"}`);
+  if (Array.isArray(json?.formats)) {
+    json.formats.forEach((f, i) => console.log(`[dl] format[${i}]: mime=${f?.mimeType?.slice(0, 40)} bitrate=${f?.audioBitrate} hasUrl=${!!f?.url}`));
+  }
+
   const url = pickPlayableFormatUrl(json && json.formats);
+  console.log(`[dl] picked url: ${url ? url.slice(0, 80) + "..." : "null"}`);
 
   if (!url) {
     return res.status(502).send("Error 502");
   }
 
   const response = await fetchWithTimeout(url, { method: "GET" });
+  console.log(`[dl] audio fetch status=${response.status} ok=${response.ok} hasBody=${!!response.body}`);
   if (!response.ok || !response.body) {
     return res.status(502).send("Error 502");
   }
