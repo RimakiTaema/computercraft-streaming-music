@@ -1,17 +1,9 @@
 # Streaming music in Minecraft (ComputerCraft CC: Tweaked mod)
 
+> [!WARNING]  
+> **This is an AI-generated fork.** This code was entirely written with AI assistance and is not affiliated with the original project. Use at your own risk.
+
 **Version:** vibe-1.0
-
-
-## This Fork Heavently AI Codded Use AT YOUR OWN RISK
-&&&
-### This Ver No Server To pull Self Host ONLY
-
-**Install:** `pastebin ----`
-
-To update from the original version, run `delete vibbedmusic` first.
-
-**Run:** `vibbedmusic`
 
 ## How to use
 
@@ -21,6 +13,7 @@ To update from the original version, run `delete vibbedmusic` first.
 4. Run the `music` command and enjoy your music!
 
 ## Troubleshooting
+
 - "No speakers attached" when using an Advanced Noisy Pocket Computer: Restart your Minecraft game. If that doesn't work, restart the server.
 - "Module 'cc.audio.dfpwm' not found" error: Make sure you're using version 1.100.0 or newer of the CC: Tweaked mod (December 2021 or later). New audio features were added in this version, so it won't work in 1.99.X or below.
 
