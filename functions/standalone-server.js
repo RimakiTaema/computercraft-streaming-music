@@ -11,6 +11,11 @@ const port = Number(process.env.PORT || 8080);
 app.disable("x-powered-by");
 
 app.all("/", async (req, res) => {
+  const start = Date.now();
+  console.log(`--> ${req.method} ${req.originalUrl} from ${req.ip}`);
+  res.on("finish", () => {
+    console.log(`<-- ${req.method} ${req.originalUrl} ${res.statusCode} (${Date.now() - start}ms)`);
+  });
   return ipodHandler(req, res);
 });
 

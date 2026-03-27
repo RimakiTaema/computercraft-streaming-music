@@ -9,6 +9,7 @@ const RAPIDAPI_KEYS = (process.env.RAPIDAPI_API_KEYS || "")
   .filter(Boolean);
 
 const rapidapi_api_keys = RAPIDAPI_KEYS.length > 0 ? RAPIDAPI_KEYS : DEFAULT_RAPIDAPI_KEYS;
+console.log(`[init] ${rapidapi_api_keys.length} API key(s) loaded, first key starts with: ${rapidapi_api_keys[0]?.slice(0, 8)}...`);
 const YT_API_BASE = "https://yt-api.p.rapidapi.com";
 const REQUEST_TIMEOUT_MS = 20000;
 const API_VERSION = "2.2.1_vibe";
@@ -36,20 +37,24 @@ export async function ipodHandler(req, res) {
     }
 
     if (id) {
+      console.log(`[handler] audio download id=${id}`);
       return await handleAudioDownload(id, res);
     }
 
     if (changelogs) {
+      console.log("[handler] changelog request");
       return await handleChangelogRequest(res);
     }
 
     if (search) {
+      console.log(`[handler] search query="${search}"`);
       return await handleSearch(search, res, requestMajor);
     }
 
+    console.log("[handler] bad request - no id/search/changelogs param");
     return res.status(400).send("Bad request");
   } catch (error) {
-    console.error(error);
+    console.error("[handler] unhandled error:", error);
     return res.status(500).send("Error 500");
   }
 }
@@ -165,13 +170,16 @@ async function makeAPIRequestWithRetries(url) {
       });
 
       if (!response.ok) {
-        throw new Error(`RapidAPI request failed (${response.status})`);
+        const body = await response.text().catch(() => "");
+        throw new Error(`RapidAPI request failed (${response.status}): ${body.slice(0, 200)}`);
       }
 
-      return await response.json();
+      const data = await response.json();
+      console.log(`[api] attempt ${attempt} success, url=${url.slice(0, 80)}`);
+      return data;
     } catch (error) {
       latestError = error;
-      console.error(`Attempt ${attempt}/${max_attempts} failed`, error);
+      console.error(`[api] attempt ${attempt}/${max_attempts} failed:`, error.message);
       if (attempt < max_attempts) {
         await sleep(1000 * attempt);
       }
