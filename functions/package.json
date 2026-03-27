@@ -2,7 +2,14 @@
   "engines": {
     "node": "20"
   },
+  "scripts": {
+    "start:standalone": "node standalone-server.js"
+  },
+  "bin": {
+    "ipod-api": "./standalone-server.js"
+  },
   "dependencies": {
+    "express": "^4.21.2",
     "firebase-functions": "^6.3.2",
     "node-fetch": "^3.3.2",
     "prism-media": "^1.3.5"
