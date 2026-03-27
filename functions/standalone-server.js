@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Standalone Express server — no Firebase dependency.
 // Works on Spark (free) plan or any host (Railway, Render, Fly.io, etc).
+import "dotenv/config";
 import express from "express";
 import { ipodHandler } from "./handler.js";
 
