@@ -247,25 +247,31 @@ async function fetchChangelogsFromGitHub() {
     throw new Error(`GitHub changelog list request failed (${listResponse.status})`);
   }
 
-  const files = (await listResponse.json()).filter((item) => item?.type === "file" && item?.name?.toLowerCase().endsWith(".md"));
+  const files = (await listResponse.json())
+    .filter((item) => item?.type === "file" && item?.name?.toLowerCase().endsWith(".md"))
+    .sort((a, b) => String(b.name || "").localeCompare(String(a.name || "")))
+    .slice(0, 20);
 
-  const items = [];
-  for (const file of files) {
-    const fileResponse = await fetchWithTimeout(file.download_url, { method: "GET" });
-    if (!fileResponse.ok) {
-      continue;
-    }
+  const items = (
+    await Promise.all(
+      files.map(async (file) => {
+        const fileResponse = await fetchWithTimeout(file.download_url, { method: "GET" });
+        if (!fileResponse.ok) {
+          return null;
+        }
 
-    const body = await fileResponse.text();
-    const date = parseDateFromFilename(file.name);
-    items.push({
-      date,
-      title: file.name.replace(/\.md$/i, "").replace(/^\d{4}-\d{2}-\d{2}[-_]?/, "").replace(/[-_]/g, " ").trim() || file.name,
-      body: replaceNonExtendedASCII(body.slice(0, 3000)),
-      source: file.html_url,
-      file: file.name,
-    });
-  }
+        const body = await fileResponse.text();
+        const date = parseDateFromFilename(file.name);
+        return {
+          date,
+          title: file.name.replace(/\.md$/i, "").replace(/^\d{4}-\d{2}-\d{2}[-_]?/, "").replace(/[-_]/g, " ").trim() || file.name,
+          body: replaceNonExtendedASCII(body.slice(0, 3000)),
+          source: file.html_url,
+          file: file.name,
+        };
+      })
+    )
+  ).filter(Boolean);
 
   items.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
   return items;

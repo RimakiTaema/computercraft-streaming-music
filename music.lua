@@ -292,7 +292,8 @@ function drawChangelogs()
 	term.write("Latest updates")
 
 	if changelog_results ~= nil then
-		for i=1,#changelog_results do
+		local max_rows = math.max(0, math.floor((height - 7) / 2))
+		for i=1,math.min(#changelog_results, max_rows) do
 			term.setTextColor(colors.white)
 			term.setCursorPos(2,5 + (i-1)*2)
 			term.write(ellipsize((changelog_results[i].date ~= "" and ("[" .. changelog_results[i].date .. "] ") or "") .. changelog_results[i].title, width - 2))
@@ -397,9 +398,11 @@ function uiLoop()
 						-- Tabs
 						if in_search_result == false and in_changelog_item == false then
 							if y == 1 then
-								if x < width/3 then
+								local tab_1_end = math.floor(width / 3)
+								local tab_2_end = math.floor((width * 2) / 3)
+								if x <= tab_1_end then
 									tab = 1
-								elseif x < (width/3)*2 then
+								elseif x <= tab_2_end then
 									tab = 2
 								else
 									tab = 3
