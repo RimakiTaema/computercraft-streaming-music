@@ -37,6 +37,20 @@ if #speakers == 0 then
 	error("No speakers attached. You need to connect a speaker to this computer. If this is an Advanced Noisy Pocket Computer, then this is a bug, and you should try restarting your Minecraft game.", 0)
 end
 
+local function ellipsize(text, max_len)
+	local value = tostring(text or "")
+	if max_len <= 0 then
+		return ""
+	end
+	if #value <= max_len then
+		return value
+	end
+	if max_len <= 3 then
+		return string.sub(value, 1, max_len)
+	end
+	return string.sub(value, 1, max_len - 3) .. "..."
+end
+
 function redrawScreen()
 	if waiting_for_input then
 		return
@@ -79,10 +93,10 @@ function drawNowPlaying()
 		term.setBackgroundColor(colors.black)
 		term.setTextColor(colors.white)
 		term.setCursorPos(2,3)
-		term.write(now_playing.name)
+		term.write(ellipsize(now_playing.name, width - 2))
 		term.setTextColor(colors.lightGray)
 		term.setCursorPos(2,4)
-		term.write(now_playing.artist)
+		term.write(ellipsize(now_playing.artist, width - 2))
 	else
 		term.setBackgroundColor(colors.black)
 		term.setTextColor(colors.lightGray)
@@ -148,32 +162,38 @@ function drawNowPlaying()
 
 	term.setCursorPos(2,8)
 	paintutils.drawBox(2,8,25,8,colors.gray)
-	local width = math.floor(24 * (volume / 3) + 0.5)-1
-	if not (width == -1) then
-		paintutils.drawBox(2,8,2+width,8,colors.white)
+	local slider_width = math.floor(24 * (volume / 3) + 0.5)-1
+	if not (slider_width == -1) then
+		paintutils.drawBox(2,8,2+slider_width,8,colors.white)
 	end
 	if volume < 0.6 then
-		term.setCursorPos(2+width+2,8)
+		term.setCursorPos(2+slider_width+2,8)
 		term.setBackgroundColor(colors.gray)
 		term.setTextColor(colors.white)
 	else
-		term.setCursorPos(2+width-3-(volume == 3 and 1 or 0),8)
+		term.setCursorPos(2+slider_width-3-(volume == 3 and 1 or 0),8)
 		term.setBackgroundColor(colors.white)
 		term.setTextColor(colors.black)
 	end
 	term.write(math.floor(100 * (volume / 3) + 0.5) .. "%")
 
-	if #queue > 0 then
-		term.setBackgroundColor(colors.black)
-		for i=1,#queue do
-			term.setTextColor(colors.white)
-			term.setCursorPos(2,10 + (i-1)*2)
-			term.write(queue[i].name)
-			term.setTextColor(colors.lightGray)
-			term.setCursorPos(2,11 + (i-1)*2)
-			term.write(queue[i].artist)
+		if #queue > 0 then
+			term.setBackgroundColor(colors.black)
+			for i=1,#queue do
+				term.setTextColor(colors.white)
+				term.setCursorPos(2,10 + (i-1)*2)
+				term.write(ellipsize(queue[i].name, width - 2))
+				term.setTextColor(colors.lightGray)
+				term.setCursorPos(2,11 + (i-1)*2)
+				term.write(ellipsize(queue[i].artist, width - 2))
+			end
 		end
-	end
+
+		term.setBackgroundColor(colors.black)
+		term.setTextColor(colors.gray)
+		term.setCursorPos(2, height)
+		term.clearLine()
+		term.write(ellipsize("Tip: Click volume bar to adjust audio level", width - 2))
 end
 
 function drawSearch()
@@ -182,7 +202,7 @@ function drawSearch()
 	term.setBackgroundColor(colors.lightGray)
 	term.setCursorPos(3,4)
 	term.setTextColor(colors.black)
-	term.write(last_search or "Search...")
+	term.write(ellipsize(last_search or "Search...", width - 3))
 
 	--Search results
 	if search_results ~= nil then
@@ -190,10 +210,10 @@ function drawSearch()
 		for i=1,#search_results do
 			term.setTextColor(colors.white)
 			term.setCursorPos(2,7 + (i-1)*2)
-			term.write(search_results[i].name)
+			term.write(ellipsize(search_results[i].name, width - 2))
 			term.setTextColor(colors.lightGray)
 			term.setCursorPos(2,8 + (i-1)*2)
-			term.write(search_results[i].artist)
+			term.write(ellipsize(search_results[i].artist, width - 2))
 		end
 	else
 		term.setCursorPos(2,7)
@@ -207,9 +227,15 @@ function drawSearch()
 		else
 			term.setCursorPos(1,7)
 			term.setTextColor(colors.lightGray)
-			print("Tip: You can paste YouTube video or playlist links.")
+			term.write(ellipsize("Tip: Paste YouTube video or playlist links.", width - 2))
 		end
 	end
+
+	term.setBackgroundColor(colors.black)
+	term.setTextColor(colors.gray)
+	term.setCursorPos(2, height)
+	term.clearLine()
+	term.write(ellipsize("Tip: Click a result for play options", width - 2))
 
 	--fullscreen song options
 	if in_search_result == true then
@@ -217,10 +243,10 @@ function drawSearch()
 		term.clear()
 		term.setCursorPos(2,2)
 		term.setTextColor(colors.white)
-		term.write(search_results[clicked_result].name)
+		term.write(ellipsize(search_results[clicked_result].name, width - 2))
 		term.setCursorPos(2,3)
 		term.setTextColor(colors.lightGray)
-		term.write(search_results[clicked_result].artist)
+		term.write(ellipsize(search_results[clicked_result].artist, width - 2))
 
 		term.setBackgroundColor(colors.gray)
 		term.setTextColor(colors.white)
@@ -316,11 +342,11 @@ function uiLoop()
 										term.setTextColor(colors.black)
 										term.setCursorPos(2,7 + (i-1)*2)
 										term.clearLine()
-										term.write(search_results[i].name)
+										term.write(ellipsize(search_results[i].name, width - 2))
 										term.setTextColor(colors.gray)
 										term.setCursorPos(2,8 + (i-1)*2)
 										term.clearLine()
-										term.write(search_results[i].artist)
+										term.write(ellipsize(search_results[i].artist, width - 2))
 										sleep(0.2)
 										in_search_result = true
 										clicked_result = i
