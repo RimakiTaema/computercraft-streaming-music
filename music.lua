@@ -1,5 +1,9 @@
 local api_base_url = "SetMe"
-local version = "2.1"
+-- Versioning:
+-- X.X.1 => Minor change (usually no forced client update unless bugfix needed)
+-- X.1.X => Medium change (client update recommended if behavior changes)
+-- 1.X.X => Major change (client update required)
+local version = "2.2.1_vibe"
 
 local width, height = term.getSize()
 local tab = 1
@@ -11,6 +15,11 @@ local search_results = nil
 local search_error = false
 local in_search_result = false
 local clicked_result = nil
+local changelog_results = nil
+local changelog_error = false
+local last_changelog_url = nil
+local in_changelog_item = false
+local clicked_changelog = nil
 
 local playing = false
 local queue = {}
@@ -38,7 +47,12 @@ if #speakers == 0 then
 end
 
 if api_base_url == "SetMe" then
-	error(Please Provide API Base URL Before Using / Edit using edit vibedmusic)
+	error("Please Provide API Base URL Before Using / Edit using edit vibedmusic", 0)
+end
+
+if string.sub(api_base_url, -1) ~= "/" then
+	api_base_url = api_base_url .. "/"
+end
 
 local function ellipsize(text, max_len)
 	local value = tostring(text or "")
@@ -69,7 +83,7 @@ function redrawScreen()
 	term.setBackgroundColor(colors.gray)
 	term.clearLine()
 	
-	tabs = {" Now Playing ", " Search "}
+	tabs = {" Now Playing ", " Search ", " Changelogs "}
 	
 	for i=1,#tabs,1 do
 		if tab == i then
@@ -84,10 +98,17 @@ function redrawScreen()
 		term.write(tabs[i])
 	end
 
+	term.setBackgroundColor(colors.gray)
+	term.setTextColor(colors.lightGray)
+	term.setCursorPos(math.max(1, width - #("v" .. version) + 1), 1)
+	term.write("v" .. version)
+
 	if tab == 1 then
 		drawNowPlaying()
 	elseif tab == 2 then
 		drawSearch()
+	elseif tab == 3 then
+		drawChangelogs()
 	end
 end
 
@@ -272,6 +293,71 @@ function drawSearch()
 	end
 end
 
+function drawChangelogs()
+	term.setBackgroundColor(colors.black)
+	term.setTextColor(colors.white)
+	term.setCursorPos(2,3)
+	term.write("Latest updates")
+
+	if changelog_results ~= nil then
+		local max_rows = math.max(0, math.floor((height - 7) / 2))
+		for i=1,math.min(#changelog_results, max_rows) do
+			term.setTextColor(colors.white)
+			term.setCursorPos(2,5 + (i-1)*2)
+			term.write(ellipsize((changelog_results[i].date ~= "" and ("[" .. changelog_results[i].date .. "] ") or "") .. changelog_results[i].title, width - 2))
+			term.setTextColor(colors.lightGray)
+			term.setCursorPos(2,6 + (i-1)*2)
+			term.write("Click to open")
+		end
+	else
+		term.setCursorPos(2,5)
+		if changelog_error then
+			term.setTextColor(colors.red)
+			term.write("Could not load changelogs")
+		elseif last_changelog_url ~= nil then
+			term.setTextColor(colors.lightGray)
+			term.write("Loading changelogs...")
+		else
+			term.setTextColor(colors.lightGray)
+			term.write("Open this tab to fetch changelogs.")
+		end
+	end
+
+	term.setBackgroundColor(colors.black)
+	term.setTextColor(colors.gray)
+	term.setCursorPos(2, height)
+	term.clearLine()
+	term.write(ellipsize("Firebase pulls GitHub changelog folder by date", width - 2))
+
+	if in_changelog_item and clicked_changelog and changelog_results and changelog_results[clicked_changelog] then
+		local item = changelog_results[clicked_changelog]
+		term.setBackgroundColor(colors.black)
+		term.clear()
+		term.setCursorPos(2,2)
+		term.setTextColor(colors.white)
+		term.write(ellipsize(item.title, width - 2))
+		term.setCursorPos(2,3)
+		term.setTextColor(colors.lightGray)
+		term.write(ellipsize(item.date, width - 2))
+
+		term.setTextColor(colors.white)
+		local lines = {}
+		for line in string.gmatch(item.body or "", "[^\r\n]+") do
+			table.insert(lines, line)
+		end
+		for i=1, math.min(#lines, math.max(0, height - 7)) do
+			term.setCursorPos(2,4+i)
+			term.write(ellipsize(lines[i], width - 2))
+		end
+
+		term.setBackgroundColor(colors.gray)
+		term.setTextColor(colors.white)
+		term.setCursorPos(2,height-1)
+		term.clearLine()
+		term.write("Back")
+	end
+end
+
 function uiLoop()
 	redrawScreen()
 
@@ -318,12 +404,21 @@ function uiLoop()
 
 					if button == 1 then
 						-- Tabs
-						if in_search_result == false then
+						if in_search_result == false and in_changelog_item == false then
 							if y == 1 then
-								if x < width/2 then
+								local tab_1_end = math.floor(width / 3)
+								local tab_2_end = math.floor((width * 2) / 3)
+								if x <= tab_1_end then
 									tab = 1
-								else
+								elseif x <= tab_2_end then
 									tab = 2
+								else
+									tab = 3
+									if changelog_results == nil and last_changelog_url == nil then
+										last_changelog_url = api_base_url .. "?v=" .. version .. "&changelogs=1"
+										http.request(last_changelog_url)
+										changelog_error = false
+									end
 								end
 								redrawScreen()
 							end
@@ -431,6 +526,21 @@ function uiLoop()
 							end
 		
 							redrawScreen()
+						elseif tab == 3 and in_changelog_item == false then
+							if changelog_results then
+								for i=1,#changelog_results do
+									if y == 5 + (i-1)*2 or y == 6 + (i-1)*2 then
+										in_changelog_item = true
+										clicked_changelog = i
+										redrawScreen()
+									end
+								end
+							end
+						elseif tab == 3 and in_changelog_item == true then
+							if y == height-1 then
+								in_changelog_item = false
+								redrawScreen()
+							end
 						elseif tab == 1 and in_search_result == false then
 							-- Now playing tab clicks
 		
@@ -700,6 +810,10 @@ function httpLoop()
 					search_results = textutils.unserialiseJSON(handle.readAll())
 					os.queueEvent("redraw_screen")
 				end
+				if url == last_changelog_url then
+					changelog_results = textutils.unserialiseJSON(handle.readAll())
+					os.queueEvent("redraw_screen")
+				end
 				if url == last_download_url then
 					is_loading = false
 					player_handle = handle
@@ -715,6 +829,10 @@ function httpLoop()
 
 				if url == last_search_url then
 					search_error = true
+					os.queueEvent("redraw_screen")
+				end
+				if url == last_changelog_url then
+					changelog_error = true
 					os.queueEvent("redraw_screen")
 				end
 				if url == last_download_url then
