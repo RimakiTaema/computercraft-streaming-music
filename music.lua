@@ -1058,7 +1058,10 @@ function handleSearchClick(x, y)
 end
 
 function handleSearchResultMenuClick(x, y)
-	if not search_results or not search_results[clicked_result] then return end
+	if not search_results or not search_results[clicked_result] then
+		in_search_result = false
+		return
+	end
 	local item = search_results[clicked_result]
 
 	if y == 6 then
@@ -1107,8 +1110,8 @@ function handleSearchResultMenuClick(x, y)
 			table.insert(queue, item)
 		end
 		os.queueEvent("audio_update")
-	elseif y == 13 then
-		-- Cancel
+	else
+		-- Any other click (including y==13 Cancel, or clicking empty space) dismisses the overlay
 		in_search_result = false
 	end
 end
