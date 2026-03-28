@@ -158,9 +158,12 @@ export default function SetupPage() {
 									<button
 										type="button"
 										onClick={() => setStep(2)}
-										className="flex-1 py-2.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-semibold transition-colors"
+										disabled={prereqs.some((p) => p.status === "fail")}
+										className="flex-1 py-2.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-semibold transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-cyan-600"
 									>
-										Continue
+										{prereqs.some((p) => p.status === "fail")
+											? "Fix issues first"
+											: "Continue"}
 									</button>
 								</div>
 							)}

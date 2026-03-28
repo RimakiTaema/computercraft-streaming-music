@@ -1,4 +1,6 @@
 import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 export interface PrereqResult {
 	name: string;
@@ -46,8 +48,6 @@ function checkBinary(name: string, versionFlag: string): PrereqResult {
 function checkRapidApi(): PrereqResult {
 	// Try to read from the API server's env by checking the functions/.env file
 	try {
-		const { readFileSync } = require("node:fs");
-		const { join } = require("node:path");
 		const envPath = join(process.cwd(), "..", "functions", ".env");
 		const envContent = readFileSync(envPath, "utf-8");
 		const match = envContent.match(/RAPIDAPI_API_KEYS=(.+)/);
