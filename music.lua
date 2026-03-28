@@ -94,12 +94,34 @@ local monitor = peripheral.find("monitor")
 local original_term = term.current()
 local has_monitor = false
 if monitor then
-	monitor.setTextScale(0.5)
-	local mw, mh = monitor.getSize()
-	if mw >= 29 and mh >= 12 then
+	-- Auto-scale: find the smallest text scale that meets minimum resolution (29x12)
+	local best_scale = nil
+	local scales = { 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5 }
+	for _, s in ipairs(scales) do
+		monitor.setTextScale(s)
+		local mw, mh = monitor.getSize()
+		if mw >= 29 and mh >= 12 then
+			best_scale = s
+			break
+		end
+	end
+	if best_scale then
+		monitor.setTextScale(best_scale)
 		has_monitor = true
 		term.redirect(monitor)
 		width, height = monitor.getSize()
+	end
+end
+
+-- Unified click handler: accepts both mouse_click and monitor_touch
+local function pullClick()
+	while true do
+		local event, p1, p2, p3 = os.pullEvent()
+		if event == "mouse_click" then
+			return event, p1, p2, p3 -- button, x, y
+		elseif event == "monitor_touch" and has_monitor then
+			return event, 1, p2, p3 -- treat as left click, x, y
+		end
 	end
 end
 
@@ -718,7 +740,7 @@ function uiLoop()
 				end,
 				function()
 					while waiting_for_input do
-						local event, button, x, y = os.pullEvent("mouse_click")
+						local event, button, x, y = pullClick()
 						-- On monitor: any click dismisses. On terminal: click outside search bar dismisses
 						if has_monitor or y ~= 3 or x < 4 or x > width - 1 then
 							waiting_for_input = false
@@ -735,8 +757,8 @@ function uiLoop()
 		else
 			parallel.waitForAny(
 				function()
-					-- Mouse click handler
-					local event, button, x, y = os.pullEvent("mouse_click")
+					-- Mouse click / monitor touch handler
+					local event, button, x, y = pullClick()
 					if button ~= 1 then return end
 
 					-- Tab clicks (only when not in overlay)
