@@ -89,51 +89,17 @@ if #speakers == 0 then
 	error("No speakers attached. Connect a speaker to this computer.", 0)
 end
 
--- Monitor auto-detect: mirror display to attached monitor
+-- Monitor auto-detect: use monitor as primary display if attached
 local monitor = peripheral.find("monitor")
 local original_term = term.current()
+local has_monitor = false
 if monitor then
 	monitor.setTextScale(0.5)
 	local mw, mh = monitor.getSize()
-	-- Only use monitor if it's big enough
 	if mw >= 29 and mh >= 12 then
-		-- Create a multi-output terminal that writes to both screen and monitor
-		local function makeMultiTerm(primary, secondary)
-			local multi = {}
-			-- Methods that need to go to both outputs
-			local mirror_methods = {
-				"write", "clear", "clearLine", "setCursorPos",
-				"setTextColor", "setTextColour", "setBackgroundColor",
-				"setBackgroundColour", "setCursorBlink", "scroll",
-			}
-			for _, method in ipairs(mirror_methods) do
-				multi[method] = function(...)
-					secondary[method](...)
-					return primary[method](...)
-				end
-			end
-			-- Methods that only query from primary
-			local primary_only = {
-				"getSize", "getCursorPos", "isColor", "isColour",
-				"getTextColor", "getTextColour", "getBackgroundColor",
-				"getBackgroundColour", "getCursorBlink",
-			}
-			for _, method in ipairs(primary_only) do
-				multi[method] = function(...)
-					return primary[method](...)
-				end
-			end
-			-- blit goes to both
-			multi.blit = function(...)
-				secondary.blit(...)
-				return primary.blit(...)
-			end
-			return multi
-		end
-		local multiTerm = makeMultiTerm(original_term, monitor)
-		term.redirect(multiTerm)
-		-- Re-read size from the computer terminal (not monitor)
-		width, height = original_term.getSize()
+		has_monitor = true
+		term.redirect(monitor)
+		width, height = monitor.getSize()
 	end
 end
 
@@ -697,12 +663,41 @@ function uiLoop()
 
 	while true do
 		if waiting_for_input then
+			-- Show tip on the computer terminal when monitor is the main display
+			if has_monitor then
+				original_term.setBackgroundColor(C_BG)
+				original_term.clear()
+				original_term.setTextColor(C_LOADING)
+				local tw, th = original_term.getSize()
+				local tip1 = "Type here and"
+				local tip2 = "press Enter"
+				original_term.setCursorPos(math.max(1, math.floor((tw - #tip1) / 2) + 1), math.floor(th / 2) - 1)
+				original_term.write(tip1)
+				original_term.setCursorPos(math.max(1, math.floor((tw - #tip2) / 2) + 1), math.floor(th / 2))
+				original_term.write(tip2)
+			end
 			parallel.waitForAny(
 				function()
-					term.setCursorPos(5, 3)
-					term.setBackgroundColor(colors.white)
-					term.setTextColor(colors.black)
+					-- Input happens on the computer terminal
+					local input_term = has_monitor and original_term or term.current()
+					if has_monitor then
+						term.redirect(original_term)
+						local tw, th = original_term.getSize()
+						original_term.setBackgroundColor(colors.white)
+						original_term.setTextColor(colors.black)
+						original_term.setCursorPos(1, math.floor(th / 2) + 1)
+						original_term.clearLine()
+					else
+						term.setCursorPos(5, 3)
+						term.setBackgroundColor(colors.white)
+						term.setTextColor(colors.black)
+					end
 					local input = read()
+					-- Redirect back to monitor if we have one
+					if has_monitor then
+						term.redirect(monitor)
+						width, height = monitor.getSize()
+					end
 
 					if string.len(input) > 0 then
 						last_search = input
@@ -724,8 +719,13 @@ function uiLoop()
 				function()
 					while waiting_for_input do
 						local event, button, x, y = os.pullEvent("mouse_click")
-						if y ~= 3 or x < 4 or x > width - 1 then
+						-- On monitor: any click dismisses. On terminal: click outside search bar dismisses
+						if has_monitor or y ~= 3 or x < 4 or x > width - 1 then
 							waiting_for_input = false
+							if has_monitor then
+								term.redirect(monitor)
+								width, height = monitor.getSize()
+							end
 							os.queueEvent("redraw_screen")
 							break
 						end
