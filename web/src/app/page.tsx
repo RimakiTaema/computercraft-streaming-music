@@ -16,7 +16,7 @@ export default function Home() {
 		} else if (!authStatus?.authenticated) {
 			router.replace("/login");
 		} else {
-			router.replace("/dashboard");
+			router.replace("/home");
 		}
 	}, [branding, authStatus, isLoading, router]);
 

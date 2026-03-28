@@ -23,7 +23,7 @@ export default function LoginPage() {
 			const result = await login.mutateAsync({ username, password });
 			// Set cookie client-side for the session token
 			document.cookie = `dash_session=${result.token}; path=/; max-age=${86400}; samesite=strict`;
-			router.push("/dashboard");
+			router.push("/home");
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Login failed");
 		}

@@ -117,7 +117,7 @@ export default function DashboardPage() {
 					</button>
 					<button
 						type="button"
-						onClick={() => router.push("/dashboard/settings")}
+						onClick={() => router.push("/home/settings")}
 						className="px-3 py-1.5 bg-[#1a2a3a] border border-[#2a3a4a] rounded-md text-sm text-gray-400 hover:bg-[#2a3a4a] transition-colors"
 					>
 						Settings

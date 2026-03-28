@@ -135,23 +135,12 @@ server {
         proxy_pass http://127.0.0.1:8080;
     }
 
-    # Legacy dashboard (Express) — optional
+    # ─── Web Dashboard (port 3000, basePath=/dashboard) ────
+
     location /dashboard {
-        limit_req zone=api_general burst=5 nodelay;
-
-        proxy_pass http://127.0.0.1:8080;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    # ─── Web Dashboard (port 3000) ─────────────────────────
-
-    location /web/ {
         limit_req zone=api_general burst=20 nodelay;
 
-        proxy_pass http://127.0.0.1:3000/;
+        proxy_pass http://127.0.0.1:3000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -161,6 +150,14 @@ server {
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
+    }
+
+    # Next.js static assets
+    location /_next {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host $host;
+        proxy_cache_valid 200 365d;
+        add_header Cache-Control "public, immutable";
     }
 
     # Deny everything else

@@ -58,7 +58,7 @@ export default function SettingsPage() {
 				<h1 className="text-lg font-bold text-cyan-400">Settings</h1>
 				<button
 					type="button"
-					onClick={() => router.push("/dashboard")}
+					onClick={() => router.push("/home")}
 					className="px-3 py-1.5 bg-[#1a2a3a] border border-[#2a3a4a] rounded-md text-sm text-gray-400 hover:bg-[#2a3a4a] transition-colors"
 				>
 					Back to Dashboard
