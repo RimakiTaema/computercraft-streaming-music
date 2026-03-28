@@ -1,11 +1,15 @@
 functions/node_modules/
+web/node_modules/
+web/.next/
 
 # Environment and secrets
 functions/.env
+functions/config.json
 
 # Lock files
 functions/bun.lock
 functions/package-lock.json
+web/bun.lock
 
 # ESLint configs
 functions/.eslintrc.js

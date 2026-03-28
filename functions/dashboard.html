@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>iPod API Dashboard</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0a0f; color: #e0e0e0; min-height: 100vh; }
+  .header { background: linear-gradient(135deg, #1a1a2e 0%, #0d0d1a 100%); padding: 20px 24px; border-bottom: 1px solid #2a2a3a; display: flex; align-items: center; justify-content: space-between; }
+  .header h1 { font-size: 20px; color: #00d4ff; }
+  .header .uptime { color: #888; font-size: 13px; }
+  .header .refresh-btn { background: #1a2a3a; border: 1px solid #2a3a4a; color: #00d4ff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  .header .refresh-btn:hover { background: #2a3a4a; }
+  .header .logout-btn { background: transparent; border: 1px solid #3a2a2a; color: #f87171; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; text-decoration: none; }
+  .header .logout-btn:hover { background: #2a1a1a; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; padding: 20px 24px; }
+  .card { background: #12121f; border: 1px solid #1e1e2e; border-radius: 10px; padding: 18px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: #666; margin-bottom: 12px; }
+  .stat-val { font-size: 32px; font-weight: 700; color: #00d4ff; }
+  .stat-sub { font-size: 12px; color: #666; margin-top: 4px; }
+  .full-width { grid-column: 1 / -1; }
+  .two-col { grid-column: span 2; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: #666; font-weight: 500; padding: 8px 10px; border-bottom: 1px solid #1e1e2e; }
+  td { padding: 7px 10px; border-bottom: 1px solid #0d0d18; }
+  .status-2 { color: #4ade80; }
+  .status-4 { color: #fbbf24; }
+  .status-5 { color: #f87171; }
+  .stream-active { color: #4ade80; }
+  .endpoint-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .endpoint-name { width: 80px; font-size: 12px; color: #888; }
+  .bar-track { flex: 1; height: 18px; background: #0d0d18; border-radius: 4px; overflow: hidden; position: relative; }
+  .bar-fill { height: 100%; border-radius: 4px; transition: width 0.3s; }
+  .bar-fill.search { background: #00d4ff; }
+  .bar-fill.download { background: #a855f7; }
+  .bar-fill.changelog { background: #4ade80; }
+  .bar-fill.other { background: #666; }
+  .bar-label { font-size: 11px; color: #aaa; min-width: 70px; text-align: right; }
+  .chart-area { height: 120px; display: flex; align-items: flex-end; gap: 1px; padding-top: 8px; }
+  .chart-bar { flex: 1; min-width: 2px; background: #00d4ff; border-radius: 2px 2px 0 0; opacity: 0.7; transition: height 0.3s; }
+  .chart-bar:hover { opacity: 1; }
+  .empty-msg { color: #444; font-size: 13px; text-align: center; padding: 30px; }
+  .tag { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+  .tag-search { background: #00d4ff22; color: #00d4ff; }
+  .tag-download { background: #a855f722; color: #a855f7; }
+  .tag-changelog { background: #4ade8022; color: #4ade80; }
+  .tag-other { background: #66666622; color: #666; }
+  .log-table { max-height: 400px; overflow-y: auto; }
+  .auto-refresh { display: flex; align-items: center; gap: 8px; }
+  .auto-refresh label { font-size: 12px; color: #666; }
+  .auto-refresh select { background: #1a2a3a; border: 1px solid #2a3a4a; color: #e0e0e0; padding: 3px 8px; border-radius: 4px; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>iPod API Dashboard</h1>
+  <div style="display:flex;align-items:center;gap:16px;">
+    <span class="uptime" id="uptime">-</span>
+    <div class="auto-refresh">
+      <label>Auto:</label>
+      <select id="refreshInterval" onchange="setRefreshInterval()">
+        <option value="0">Off</option>
+        <option value="2000">2s</option>
+        <option value="5000" selected>5s</option>
+        <option value="10000">10s</option>
+        <option value="30000">30s</option>
+      </select>
+    </div>
+    <button class="refresh-btn" onclick="refresh()">Refresh</button>
+    <a class="logout-btn" href="/dashboard/logout">Logout</a>
+  </div>
+</div>
+
+<div class="grid">
+  <!-- Stats cards -->
+  <div class="card">
+    <h2>Total Requests</h2>
+    <div class="stat-val" id="totalRequests">0</div>
+    <div class="stat-sub" id="requestRate">-</div>
+  </div>
+  <div class="card">
+    <h2>Bandwidth Out</h2>
+    <div class="stat-val" id="totalBandwidth">0 B</div>
+    <div class="stat-sub" id="bandwidthRate">-</div>
+  </div>
+  <div class="card">
+    <h2>Active Streams</h2>
+    <div class="stat-val stream-active" id="activeStreamCount">0</div>
+    <div class="stat-sub" id="streamInfo">No active streams</div>
+  </div>
+
+  <!-- Bandwidth by endpoint -->
+  <div class="card two-col">
+    <h2>Bandwidth by Endpoint</h2>
+    <div id="endpointBars"></div>
+  </div>
+
+  <!-- Bandwidth over time -->
+  <div class="card full-width">
+    <h2>Bandwidth / Minute (last 60 min)</h2>
+    <div class="chart-area" id="bandwidthChart"></div>
+  </div>
+
+  <!-- Active streams table -->
+  <div class="card full-width">
+    <h2>Active Streams</h2>
+    <div id="streamsTable"></div>
+  </div>
+
+  <!-- Request log -->
+  <div class="card full-width">
+    <h2>Request Log (latest 100)</h2>
+    <div class="log-table" id="logTable"></div>
+  </div>
+</div>
+
+<script>
+let refreshTimer = null;
+
+function formatBytes(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+  if (b < 1073741824) return (b / 1048576).toFixed(1) + ' MB';
+  return (b / 1073741824).toFixed(2) + ' GB';
+}
+
+function formatDuration(ms) {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return s + 's';
+  if (s < 3600) return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return h + 'h ' + m + 'm';
+}
+
+function statusClass(code) {
+  if (code < 300) return 'status-2';
+  if (code < 500) return 'status-4';
+  return 'status-5';
+}
+
+async function refresh() {
+  try {
+    const res = await fetch('/dashboard/api/stats');
+    if (res.status === 401) {
+      window.location.href = '/dashboard/login';
+      return;
+    }
+    const data = await res.json();
+    render(data);
+  } catch (e) {
+    console.error('Failed to fetch stats:', e);
+  }
+}
+
+function render(d) {
+  document.getElementById('uptime').textContent = 'Up ' + formatDuration(d.uptime);
+  document.getElementById('totalRequests').textContent = d.totalRequests.toLocaleString();
+  document.getElementById('totalBandwidth').textContent = formatBytes(d.totalBytesOut);
+  document.getElementById('activeStreamCount').textContent = d.activeStreams.length;
+
+  // Rates from last minute bucket
+  const bw = d.bandwidthByMinute;
+  if (bw.length > 0) {
+    const last = bw[bw.length - 1];
+    document.getElementById('requestRate').textContent = last.requests + ' req/min';
+    document.getElementById('bandwidthRate').textContent = formatBytes(last.bytes) + '/min';
+  }
+
+  document.getElementById('streamInfo').textContent =
+    d.activeStreams.length === 0 ? 'No active streams' : d.activeStreams.length + ' streaming now';
+
+  // Endpoint bars
+  const ep = d.byEndpoint;
+  const maxBytes = Math.max(1, ...Object.values(ep).map(e => e.bytes));
+  let barsHtml = '';
+  for (const [name, val] of Object.entries(ep)) {
+    if (name === 'dashboard') continue;
+    const pct = (val.bytes / maxBytes * 100).toFixed(1);
+    barsHtml += `<div class="endpoint-bar">
+      <span class="endpoint-name">${name}</span>
+      <div class="bar-track"><div class="bar-fill ${name}" style="width:${pct}%"></div></div>
+      <span class="bar-label">${formatBytes(val.bytes)} (${val.count} req${val.errors ? ', ' + val.errors + ' err' : ''})</span>
+    </div>`;
+  }
+  document.getElementById('endpointBars').innerHTML = barsHtml;
+
+  // Bandwidth chart (last 60 minutes)
+  const last60 = bw.slice(-60);
+  const maxBucket = Math.max(1, ...last60.map(b => b.bytes));
+  let chartHtml = '';
+  for (const b of last60) {
+    const h = Math.max(1, (b.bytes / maxBucket) * 110);
+    chartHtml += `<div class="chart-bar" style="height:${h}px" title="${formatBytes(b.bytes)}"></div>`;
+  }
+  if (last60.length === 0) chartHtml = '<div class="empty-msg">No data yet</div>';
+  document.getElementById('bandwidthChart').innerHTML = chartHtml;
+
+  // Active streams table
+  if (d.activeStreams.length === 0) {
+    document.getElementById('streamsTable').innerHTML = '<div class="empty-msg">No active streams</div>';
+  } else {
+    let sHtml = '<table><tr><th>Source</th><th>Client</th><th>Duration</th><th>Sent</th></tr>';
+    for (const s of d.activeStreams) {
+      sHtml += `<tr>
+        <td>${escHtml(s.source)}</td>
+        <td>${escHtml(s.clientIp)}</td>
+        <td>${formatDuration(Date.now() - s.startedAt)}</td>
+        <td>${formatBytes(s.bytesOut)}</td>
+      </tr>`;
+    }
+    sHtml += '</table>';
+    document.getElementById('streamsTable').innerHTML = sHtml;
+  }
+
+  // Request log (reversed, latest first, capped at 100)
+  const logs = (d.requestLog || []).slice(-100).reverse();
+  if (logs.length === 0) {
+    document.getElementById('logTable').innerHTML = '<div class="empty-msg">No requests yet</div>';
+  } else {
+    let lHtml = '<table><tr><th>Time</th><th>Type</th><th>Path</th><th>Status</th><th>Time</th><th>Size</th><th>IP</th></tr>';
+    for (const l of logs) {
+      const t = new Date(l.ts).toLocaleTimeString();
+      lHtml += `<tr>
+        <td>${t}</td>
+        <td><span class="tag tag-${l.type}">${l.type}</span></td>
+        <td title="${escHtml(l.path)}">${escHtml(l.path.length > 50 ? l.path.slice(0, 50) + '...' : l.path)}</td>
+        <td class="${statusClass(l.status)}">${l.status}</td>
+        <td>${l.ms}ms</td>
+        <td>${formatBytes(l.bytes)}</td>
+        <td>${escHtml(l.ip)}</td>
+      </tr>`;
+    }
+    lHtml += '</table>';
+    document.getElementById('logTable').innerHTML = lHtml;
+  }
+}
+
+function escHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s || '';
+  return d.innerHTML;
+}
+
+function setRefreshInterval() {
+  if (refreshTimer) clearInterval(refreshTimer);
+  const ms = parseInt(document.getElementById('refreshInterval').value);
+  if (ms > 0) refreshTimer = setInterval(refresh, ms);
+}
+
+// Initial load
+refresh();
+setRefreshInterval();
+</script>
+</body>
+</html>

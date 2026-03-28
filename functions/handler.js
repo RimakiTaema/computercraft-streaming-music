@@ -7,6 +7,68 @@ import { dirname, join } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const COOKIES_PATH = join(__dirname, "cookies.txt");
+
+// ============================================================
+// METRICS / DASHBOARD STATE
+// ============================================================
+
+const MAX_LOG_ENTRIES = 500;
+const MAX_BANDWIDTH_BUCKETS = 1440; // 24h of 1-min buckets
+
+const metrics = {
+  startedAt: Date.now(),
+  totalRequests: 0,
+  totalBytesOut: 0,
+  activeStreams: [],       // { id, source, startedAt, bytesOut, clientIp }
+  requestLog: [],          // { ts, method, path, status, ms, ip, type, bytes }
+  bandwidthByMinute: [],   // { ts, bytes, requests }
+  byEndpoint: {
+    search: { count: 0, bytes: 0, errors: 0 },
+    download: { count: 0, bytes: 0, errors: 0 },
+    changelog: { count: 0, bytes: 0, errors: 0 },
+    dashboard: { count: 0, bytes: 0, errors: 0 },
+    other: { count: 0, bytes: 0, errors: 0 },
+  },
+};
+
+function classifyEndpoint(query) {
+  if (query.id || query.url) return "download";
+  if (query.search) return "search";
+  if (String(query.changelogs) === "1") return "changelog";
+  return "other";
+}
+
+function getBandwidthBucket() {
+  const now = Math.floor(Date.now() / 60000); // minute bucket
+  const buckets = metrics.bandwidthByMinute;
+  if (buckets.length === 0 || buckets[buckets.length - 1].ts !== now) {
+    if (buckets.length >= MAX_BANDWIDTH_BUCKETS) buckets.shift();
+    buckets.push({ ts: now, bytes: 0, requests: 0 });
+  }
+  return buckets[buckets.length - 1];
+}
+
+function addLogEntry(entry) {
+  if (metrics.requestLog.length >= MAX_LOG_ENTRIES) metrics.requestLog.shift();
+  metrics.requestLog.push(entry);
+}
+
+function registerStream(id, source, ip) {
+  const stream = { id, source: source.slice(0, 100), startedAt: Date.now(), bytesOut: 0, clientIp: ip || "unknown" };
+  metrics.activeStreams.push(stream);
+  return stream;
+}
+
+function removeStream(id) {
+  metrics.activeStreams = metrics.activeStreams.filter((s) => s.id !== id);
+}
+
+export function getMetrics() {
+  return {
+    ...metrics,
+    uptime: Date.now() - metrics.startedAt,
+  };
+}
 let hasCookies = false;
 try { accessSync(COOKIES_PATH); hasCookies = true; } catch { /* no cookies */ }
 console.log(`[init] cookies.txt: ${hasCookies ? "found" : "not found"}`);
@@ -21,7 +83,7 @@ const rapidapi_api_keys = RAPIDAPI_KEYS.length > 0 ? RAPIDAPI_KEYS : DEFAULT_RAP
 console.log(`[init] ${rapidapi_api_keys.length} API key(s) loaded, first key starts with: ${rapidapi_api_keys[0]?.slice(0, 8)}...`);
 const YT_API_BASE = "https://yt-api.p.rapidapi.com";
 const REQUEST_TIMEOUT_MS = 20000;
-const API_VERSION = "3.1.0_vibe";
+const API_VERSION = "4.0.0_vibe";
 const API_BUILD = "vibecoded";
 const HAS_RAPIDAPI = RAPIDAPI_KEYS.length > 0 && RAPIDAPI_KEYS[0] !== "YOUR API KEY HERE";
 const GITHUB_OWNER = process.env.GITHUB_OWNER || "AngryManTV";
@@ -29,6 +91,46 @@ const GITHUB_REPO = process.env.GITHUB_REPO || "computercraft-streaming-music";
 const GITHUB_CHANGELOG_DIR = process.env.GITHUB_CHANGELOG_DIR || "changelog";
 
 export async function ipodHandler(req, res) {
+  const reqStart = Date.now();
+  const endpoint = classifyEndpoint(req.query || {});
+  metrics.totalRequests++;
+  metrics.byEndpoint[endpoint].count++;
+  const bucket = getBandwidthBucket();
+  bucket.requests++;
+
+  // Track response bytes
+  const origWrite = res.write.bind(res);
+  const origEnd = res.end.bind(res);
+  let bytesOut = 0;
+
+  res.write = function (chunk, ...args) {
+    if (chunk) bytesOut += Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(chunk);
+    return origWrite(chunk, ...args);
+  };
+  res.end = function (chunk, ...args) {
+    if (chunk) bytesOut += Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(chunk);
+    return origEnd(chunk, ...args);
+  };
+
+  res.on("finish", () => {
+    const ms = Date.now() - reqStart;
+    metrics.totalBytesOut += bytesOut;
+    metrics.byEndpoint[endpoint].bytes += bytesOut;
+    const b = getBandwidthBucket();
+    b.bytes += bytesOut;
+    if (res.statusCode >= 400) metrics.byEndpoint[endpoint].errors++;
+    addLogEntry({
+      ts: Date.now(),
+      method: req.method,
+      path: req.originalUrl || req.url,
+      status: res.statusCode,
+      ms,
+      ip: req.ip || req.socket?.remoteAddress || "?",
+      type: endpoint,
+      bytes: bytesOut,
+    });
+  });
+
   try {
     res.setHeader("X-IPod-Version", API_VERSION);
     res.setHeader("X-IPod-Build", API_BUILD);
@@ -46,9 +148,25 @@ export async function ipodHandler(req, res) {
       return res.status(426).send("Please upgrade client");
     }
 
-    if (id) {
-      console.log(`[handler] audio download id=${id}`);
-      return await handleAudioDownload(id, res);
+    const dlUrl = typeof req.query.url === "string" ? req.query.url.trim() : "";
+
+    if (id || dlUrl) {
+      let source;
+      if (dlUrl) {
+        source = sanitizeUrl(dlUrl);
+        if (!source) {
+          console.warn(`[handler] blocked unsafe download url: ${dlUrl.slice(0, 80)}`);
+          return res.status(400).send("Invalid or blocked URL");
+        }
+      } else {
+        // id is always a YouTube video ID — safe to construct
+        if (!/^[\w-]{11}$/.test(id)) {
+          return res.status(400).send("Invalid video ID");
+        }
+        source = `https://www.youtube.com/watch?v=${encodeURIComponent(id)}`;
+      }
+      console.log(`[handler] audio download source=${source.slice(0, 80)}`);
+      return await handleAudioDownload(source, res, req.ip || req.socket?.remoteAddress);
     }
 
     if (changelogs) {
@@ -69,18 +187,19 @@ export async function ipodHandler(req, res) {
   }
 }
 
-async function handleAudioDownload(id, res) {
-  const videoUrl = `https://www.youtube.com/watch?v=${encodeURIComponent(id)}`;
-  console.log(`[dl] starting yt-dlp + ffmpeg pipeline for ${id}`);
+async function handleAudioDownload(sourceUrl, res, clientIp) {
+  console.log(`[dl] starting yt-dlp + ffmpeg pipeline for ${sourceUrl.slice(0, 80)}`);
+  const streamId = `stream_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const streamMeta = registerStream(streamId, sourceUrl, clientIp);
 
   return new Promise((resolve, reject) => {
     // yt-dlp: extract best audio, output raw audio to stdout
-    const ytdlpArgs = ["-f", "bestaudio", "--no-playlist", "-o", "-"];
+    const ytdlpArgs = ["-f", "bestaudio", "--no-playlist", "--no-exec", "--no-batch", "-o", "-"];
     if (hasCookies) {
       ytdlpArgs.push("--cookies", COOKIES_PATH);
       console.log("[dl] using cookies.txt");
     }
-    ytdlpArgs.push(videoUrl);
+    ytdlpArgs.push(sourceUrl);
 
     const ytdlp = spawn("yt-dlp", ytdlpArgs, { stdio: ["ignore", "pipe", "pipe"] });
 
@@ -107,7 +226,14 @@ async function handleAudioDownload(id, res) {
     res.setHeader("Content-Type", "application/octet-stream");
     res.setHeader("Cache-Control", "no-store");
 
+    ffmpeg.stdout.on("data", (chunk) => {
+      streamMeta.bytesOut += chunk.length;
+    });
     ffmpeg.stdout.pipe(res);
+
+    res.on("close", () => {
+      removeStream(streamId);
+    });
 
     ytdlp.on("error", (err) => {
       console.error("[dl] yt-dlp spawn error:", err.message);
@@ -142,11 +268,147 @@ async function handleAudioDownload(id, res) {
   });
 }
 
+// ============================================================
+// URL SANITIZATION — prevent SSRF / local file access
+// ============================================================
+
+const BLOCKED_HOSTS = [
+  /^localhost$/i,
+  /^127\.\d+\.\d+\.\d+$/,
+  /^10\.\d+\.\d+\.\d+$/,
+  /^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/,
+  /^192\.168\.\d+\.\d+$/,
+  /^0\.0\.0\.0$/,
+  /^169\.254\.\d+\.\d+$/,       // link-local / cloud metadata
+  /^\[::1\]$/,                    // IPv6 loopback
+  /^\[fd[0-9a-f]{2}:/i,          // IPv6 private
+  /^\[fe80:/i,                    // IPv6 link-local
+  /metadata\.google\.internal/i,
+  /metadata\.internal/i,
+];
+
+const ALLOWED_SCHEMES = ["http:", "https:"];
+
+function sanitizeUrl(raw) {
+  if (!raw || typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+
+  // Block non-http schemes (file://, ftp://, data://, etc.)
+  let parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return null; // not a valid URL — treat as search query, fine
+  }
+
+  if (!ALLOWED_SCHEMES.includes(parsed.protocol)) {
+    console.warn(`[security] blocked scheme: ${parsed.protocol} in ${trimmed.slice(0, 80)}`);
+    return null;
+  }
+
+  // Block private/internal hosts
+  const host = parsed.hostname.toLowerCase();
+  for (const pattern of BLOCKED_HOSTS) {
+    if (pattern.test(host)) {
+      console.warn(`[security] blocked private host: ${host}`);
+      return null;
+    }
+  }
+
+  return trimmed;
+}
+
+function detectPlatform(search) {
+  if (/soundcloud\.com\//i.test(search)) return "soundcloud";
+  if (/open\.spotify\.com\/|spotify\.com\//i.test(search)) return "spotify";
+  if (/(youtube\.com|youtu\.be)\//i.test(search)) return "youtube";
+  if (/^https?:\/\//i.test(search)) return "direct";
+  return "text";
+}
+
 async function handleSearch(search, res, requestMajor) {
+  const platform = detectPlatform(search);
+  console.log(`[search] detected platform=${platform}`);
+
+  // Sanitize any URL-based search input
+  if (platform !== "text" && platform !== "youtube") {
+    const safe = sanitizeUrl(search);
+    if (!safe) {
+      console.warn(`[search] blocked unsafe search url: ${search.slice(0, 80)}`);
+      return respondWithLatin1Json(res, []);
+    }
+    search = safe;
+  }
+
+  // --- SoundCloud URL ---
+  if (platform === "soundcloud") {
+    try {
+      const info = await ytdlpGetInfo(search);
+      if (info) {
+        console.log("[search] soundcloud info via yt-dlp ok");
+        return respondWithLatin1Json(res, [{
+          id: info.id,
+          name: replaceNonExtendedASCII(info.title || "Unknown"),
+          artist: `${toHMS(Number(info.duration || 0))} · ${replaceNonExtendedASCII(info.uploader || info.channel || "Unknown Artist")}`,
+          platform: "soundcloud",
+          download_url: info.webpage_url || search,
+        }]);
+      }
+    } catch (err) {
+      console.error(`[search] soundcloud lookup failed: ${err.message}`);
+    }
+    return respondWithLatin1Json(res, []);
+  }
+
+  // --- Spotify URL (metadata -> YouTube match) ---
+  if (platform === "spotify") {
+    try {
+      const oembedUrl = `https://open.spotify.com/oembed?url=${encodeURIComponent(search)}`;
+      const oembedRes = await fetchWithTimeout(oembedUrl, { method: "GET" });
+      if (oembedRes.ok) {
+        const meta = await oembedRes.json();
+        const trackTitle = replaceNonExtendedASCII(meta.title || "Unknown");
+        const searchQuery = trackTitle;
+        console.log(`[search] spotify oembed ok, searching youtube for: "${searchQuery}"`);
+        const ytResults = await ytdlpSearch(searchQuery, 3);
+        if (ytResults.length > 0) {
+          const results = ytResults.map((r) => ({
+            ...r,
+            platform: "spotify",
+          }));
+          return respondWithLatin1Json(res, results);
+        }
+      }
+    } catch (err) {
+      console.error(`[search] spotify lookup failed: ${err.message}`);
+    }
+    return respondWithLatin1Json(res, []);
+  }
+
+  // --- Direct URL (any yt-dlp supported site) ---
+  if (platform === "direct") {
+    try {
+      const info = await ytdlpGetInfo(search);
+      if (info) {
+        console.log("[search] direct url info via yt-dlp ok");
+        return respondWithLatin1Json(res, [{
+          id: info.id,
+          name: replaceNonExtendedASCII(info.title || "Unknown"),
+          artist: `${toHMS(Number(info.duration || 0))} · ${replaceNonExtendedASCII(info.uploader || info.channel || "Unknown")}`,
+          platform: "direct",
+          download_url: info.webpage_url || search,
+        }]);
+      }
+    } catch (err) {
+      console.error(`[search] direct url lookup failed: ${err.message}`);
+    }
+    return respondWithLatin1Json(res, []);
+  }
+
+  // --- YouTube URL: video ---
   const youtube_id_parts = search.match(/((?:https?:)?\/\/)?((?:www|m|music)\.)?((?:youtube\.com|youtu.be))(\/(?:[\w\-]+\?v=|embed\/|v\/)?)([\w\-]+)(\S+)?$/);
   const youtube_id_match = youtube_id_parts && youtube_id_parts[5];
   if (youtube_id_match && youtube_id_match.length === 11) {
-    // Single video lookup — try RapidAPI, fallback to yt-dlp
     try {
       if (HAS_RAPIDAPI) {
         const item = await makeAPIRequestWithRetries(`${YT_API_BASE}/video/info?id=${youtube_id_match}`);
@@ -156,6 +418,7 @@ async function handleSearch(search, res, requestMajor) {
             id: item.id,
             name: replaceNonExtendedASCII(item.title),
             artist: `${toHMS(Number(item.lengthSeconds || 0))} · ${replaceNonExtendedASCII((item.channelTitle || "Unknown Artist").split(" - Topic")[0])}`,
+            platform: "youtube",
           }]);
         }
       }
@@ -163,7 +426,6 @@ async function handleSearch(search, res, requestMajor) {
       console.warn(`[search] RapidAPI video info failed, falling back to yt-dlp: ${err.message}`);
     }
 
-    // Fallback: yt-dlp --dump-json
     try {
       const info = await ytdlpGetInfo(`https://www.youtube.com/watch?v=${youtube_id_match}`);
       if (info) {
@@ -172,6 +434,7 @@ async function handleSearch(search, res, requestMajor) {
           id: info.id,
           name: replaceNonExtendedASCII(info.title || "Unknown"),
           artist: `${toHMS(Number(info.duration || 0))} · ${replaceNonExtendedASCII((info.channel || info.uploader || "Unknown Artist").split(" - Topic")[0])}`,
+          platform: "youtube",
         }]);
       }
     } catch (err2) {
@@ -181,10 +444,10 @@ async function handleSearch(search, res, requestMajor) {
     return respondWithLatin1Json(res, []);
   }
 
+  // --- YouTube URL: playlist ---
   const youtube_playlist_parts = search.match(/((?:https?:)?\/\/)?((?:www|m|music)\.)?((?:youtube\.com|youtu.be))\/playlist(\S+)list=([\w\-]+)(\S+)?$/);
   const youtube_playlist_match = youtube_playlist_parts && youtube_playlist_parts[5];
   if (youtube_playlist_match && youtube_playlist_match.length === 34 && requestMajor >= 2) {
-    // Playlist lookup — try RapidAPI, fallback to yt-dlp
     try {
       if (HAS_RAPIDAPI) {
         const item = await makeAPIRequestWithRetries(`${YT_API_BASE}/playlist?id=${youtube_playlist_match}`);
@@ -195,6 +458,7 @@ async function handleSearch(search, res, requestMajor) {
             name: replaceNonExtendedASCII(item.meta.title),
             artist: `Playlist · ${item.meta.videoCount} videos · ${replaceNonExtendedASCII(item.meta.channelTitle)}`,
             type: "playlist",
+            platform: "youtube",
             playlist_items: item.data.map((pi) => ({
               id: pi.videoId,
               name: replaceNonExtendedASCII(pi.title),
@@ -207,7 +471,6 @@ async function handleSearch(search, res, requestMajor) {
       console.warn(`[search] RapidAPI playlist failed, falling back to yt-dlp: ${err.message}`);
     }
 
-    // Fallback: yt-dlp playlist
     try {
       const items = await ytdlpGetPlaylist(`https://www.youtube.com/playlist?list=${youtube_playlist_match}`);
       if (items && items.length > 0) {
@@ -217,6 +480,7 @@ async function handleSearch(search, res, requestMajor) {
           name: replaceNonExtendedASCII(items[0]._playlist_title || "Playlist"),
           artist: `Playlist · ${items.length} videos`,
           type: "playlist",
+          platform: "youtube",
           playlist_items: items.map((pi) => ({
             id: pi.id,
             name: replaceNonExtendedASCII(pi.title || "Unknown"),
@@ -231,7 +495,7 @@ async function handleSearch(search, res, requestMajor) {
     return respondWithLatin1Json(res, []);
   }
 
-  // Text search — try RapidAPI, fallback to yt-dlp ytsearch
+  // --- Text search (defaults to YouTube) ---
   try {
     if (HAS_RAPIDAPI) {
       const json = await makeAPIRequestWithRetries(
@@ -243,6 +507,7 @@ async function handleSearch(search, res, requestMajor) {
           id: item.videoId,
           name: replaceNonExtendedASCII(item.title),
           artist: `${item.lengthText || "0:00"} · ${replaceNonExtendedASCII((item.channelTitle || "Unknown Artist").split(" - Topic")[0])}`,
+          platform: "youtube",
         }));
       if (results.length > 0) {
         console.log(`[search] text search via RapidAPI ok (${results.length} results)`);
@@ -253,11 +518,11 @@ async function handleSearch(search, res, requestMajor) {
     console.warn(`[search] RapidAPI text search failed, falling back to yt-dlp: ${err.message}`);
   }
 
-  // Fallback: yt-dlp ytsearch
   try {
     const results = await ytdlpSearch(search);
-    console.log(`[search] text search via yt-dlp fallback ok (${results.length} results)`);
-    return respondWithLatin1Json(res, results);
+    const tagged = results.map((r) => ({ ...r, platform: "youtube" }));
+    console.log(`[search] text search via yt-dlp fallback ok (${tagged.length} results)`);
+    return respondWithLatin1Json(res, tagged);
   } catch (err2) {
     console.error(`[search] yt-dlp search fallback also failed: ${err2.message}`);
   }
@@ -358,7 +623,7 @@ function sleep(ms) {
 
 function ytdlpExec(args) {
   return new Promise((resolve, reject) => {
-    const fullArgs = [...args];
+    const fullArgs = ["--no-exec", "--no-batch", ...args];
     if (hasCookies) fullArgs.push("--cookies", COOKIES_PATH);
 
     const proc = spawn("yt-dlp", fullArgs, { stdio: ["ignore", "pipe", "pipe"] });
