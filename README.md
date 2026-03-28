@@ -4,7 +4,7 @@
 > **This is an AI-generated fork.** This code was entirely written with AI assistance and is not affiliated with the original project. Use at your own risk.
 
 > [!CAUTION]
-> This Fork Is no longer Using Original YTAPI Server And No Server Provided For This Fork. Please Run At your own risk
+> This Fork Is no longer Using Original YTAPI Server And No Server Provided For This Fork. Self Host is required
 
 **Version:** vibe-1.0
 
@@ -21,9 +21,6 @@
 - "Module 'cc.audio.dfpwm' not found" error: Make sure you're using version 1.100.0 or newer of the CC: Tweaked mod (December 2021 or later). New audio features were added in this version, so it won't work in 1.99.X or below.
 
 ## How to self-host
-
-> [!IMPORTANT]  
-> Self-hosting is not required to use this program. You can simply use the pastebin command above.
 
 The ComputerCraft program connects to a web server to download the music files. This server is hosted with Firebase Cloud Functions. The server downloads YouTube videos using an unofficial API on RapidAPI.
 
