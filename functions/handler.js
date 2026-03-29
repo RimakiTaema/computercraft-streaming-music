@@ -1,9 +1,10 @@
 import fetch from "node-fetch";
 import { spawn } from "node:child_process";
+import { execSync } from "node:child_process";
 import { pipeline } from "node:stream/promises";
-import { accessSync } from "node:fs";
+import { accessSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const COOKIES_PATH = join(__dirname, "cookies.txt");
@@ -188,8 +189,53 @@ export async function ipodHandler(req, res) {
 }
 
 const IS_WIN = process.platform === "win32";
-const YTDLP_BIN = IS_WIN ? "yt-dlp.exe" : "yt-dlp";
-const FFMPEG_BIN = IS_WIN ? "ffmpeg.exe" : "ffmpeg";
+
+// Build expanded PATH so spawn() can find binaries wherever they're installed
+const EXTRA_PATHS = IS_WIN
+  ? [
+      join(process.env.LOCALAPPDATA || "", "Microsoft", "WinGet", "Links"),
+      join(process.env.PROGRAMDATA || "C:\\ProgramData", "chocolatey", "bin"),
+      process.env.USERPROFILE ? join(process.env.USERPROFILE, "scoop", "shims") : "",
+      join(process.env.LOCALAPPDATA || "", "Programs", "yt-dlp"),
+      join(process.env.LOCALAPPDATA || "", "Programs", "ffmpeg", "bin"),
+      join(process.env.PROGRAMFILES || "", "yt-dlp"),
+      join(process.env.PROGRAMFILES || "", "ffmpeg", "bin"),
+      join(process.env.PROGRAMFILES || "", "ffmpeg"),
+      "C:\\ffmpeg\\bin", "C:\\ffmpeg", "C:\\yt-dlp", "C:\\Tools",
+      process.env.APPDATA ? join(process.env.APPDATA, "Python", "Scripts") : "",
+    ]
+  : [
+      "/usr/local/bin", "/usr/bin", "/bin", "/snap/bin",
+      process.env.HOME ? join(process.env.HOME, ".local", "bin") : "",
+    ];
+
+const SPAWN_PATH = `${process.env.PATH || ""}${delimiter}${EXTRA_PATHS.filter(Boolean).join(delimiter)}`;
+const SPAWN_ENV = { ...process.env, PATH: SPAWN_PATH };
+
+// Resolve binary: try finding full path, fall back to name
+function findBin(name) {
+  const exeName = IS_WIN ? `${name}.exe` : name;
+  // Check expanded PATH directories
+  for (const dir of EXTRA_PATHS.filter(Boolean)) {
+    const full = join(dir, exeName);
+    try { if (existsSync(full)) { console.log(`[init] ${name}: found at ${full}`); return full; } } catch {}
+  }
+  // Try 'where' (Windows) or 'which' (Unix)
+  try {
+    const cmd = IS_WIN ? `where ${exeName}` : `which ${name}`;
+    const result = execSync(cmd, { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], env: SPAWN_ENV }).trim().split("\n")[0];
+    if (result) { console.log(`[init] ${name}: resolved to ${result}`); return result; }
+  } catch {}
+  console.log(`[init] ${name}: using name directly (hope it's in PATH)`);
+  return exeName;
+}
+
+const YTDLP_BIN = findBin("yt-dlp");
+const FFMPEG_BIN = findBin("ffmpeg");
+
+function spawnBin(bin, args, opts = {}) {
+  return spawn(bin, args, { ...opts, env: { ...SPAWN_ENV, ...opts.env }, ...(IS_WIN ? { shell: true } : {}) });
+}
 
 async function handleAudioDownload(sourceUrl, res, clientIp) {
   console.log(`[dl] starting yt-dlp + ffmpeg pipeline for ${sourceUrl.slice(0, 80)}`);
@@ -209,11 +255,10 @@ async function handleAudioDownload(sourceUrl, res, clientIp) {
     }
     ytdlpArgs.push(sourceUrl);
 
-    const spawnOpts = { stdio: ["ignore", "pipe", "pipe"], ...(IS_WIN ? { shell: true } : {}) };
-    const ytdlp = spawn(YTDLP_BIN, ytdlpArgs, spawnOpts);
+    const ytdlp = spawnBin(YTDLP_BIN, ytdlpArgs, { stdio: ["ignore", "pipe", "pipe"] });
 
     // ffmpeg: convert to DFPWM for ComputerCraft
-    const ffmpeg = spawn(FFMPEG_BIN, [
+    const ffmpeg = spawnBin(FFMPEG_BIN, [
       "-i", "pipe:0",
       "-analyzeduration", "0",
       "-loglevel", "warning",
@@ -221,7 +266,7 @@ async function handleAudioDownload(sourceUrl, res, clientIp) {
       "-ar", "48000",
       "-ac", "1",
       "pipe:1",
-    ], { stdio: ["pipe", "pipe", "pipe"], ...(IS_WIN ? { shell: true } : {}) });
+    ], { stdio: ["pipe", "pipe", "pipe"] });
 
     let ytdlpStderr = "";
     let ffmpegStderr = "";
@@ -635,7 +680,7 @@ function ytdlpExec(args) {
     const fullArgs = ["--no-exec", "--no-batch", ...args];
     if (hasCookies) fullArgs.push("--cookies", COOKIES_PATH);
 
-    const proc = spawn(YTDLP_BIN, fullArgs, { stdio: ["ignore", "pipe", "pipe"], ...(IS_WIN ? { shell: true } : {}) });
+    const proc = spawnBin(YTDLP_BIN, fullArgs, { stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
 
