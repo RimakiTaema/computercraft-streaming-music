@@ -12,25 +12,50 @@ export interface PrereqResult {
 const API_BASE = process.env.API_URL || "http://localhost:8080";
 const IS_WINDOWS = process.platform === "win32";
 
-// Extra binary search paths (platform-aware)
-const EXTRA_PATHS = IS_WINDOWS
-	? [
-			join(process.env.LOCALAPPDATA || "", "Programs", "yt-dlp"),
-			join(process.env.LOCALAPPDATA || "", "Programs", "ffmpeg", "bin"),
-			join(process.env.PROGRAMFILES || "", "yt-dlp"),
-			join(process.env.PROGRAMFILES || "", "ffmpeg", "bin"),
-			process.env.USERPROFILE ? join(process.env.USERPROFILE, "scoop", "shims") : "",
-			process.env.USERPROFILE ? join(process.env.USERPROFILE, ".local", "bin") : "",
-		]
-	: [
-			"/usr/local/bin",
-			"/usr/bin",
-			"/bin",
-			"/snap/bin",
-			process.env.HOME ? join(process.env.HOME, ".local", "bin") : "",
-		];
+// Common install locations per platform
+const WIN_EXTRA_PATHS = [
+	// winget
+	join(process.env.LOCALAPPDATA || "", "Microsoft", "WinGet", "Links"),
+	join(process.env.LOCALAPPDATA || "", "Microsoft", "WinGet", "Packages"),
+	// chocolatey
+	join(process.env.PROGRAMDATA || "C:\\ProgramData", "chocolatey", "bin"),
+	// scoop
+	process.env.USERPROFILE ? join(process.env.USERPROFILE, "scoop", "shims") : "",
+	// manual / common locations
+	join(process.env.LOCALAPPDATA || "", "Programs", "yt-dlp"),
+	join(process.env.LOCALAPPDATA || "", "Programs", "ffmpeg", "bin"),
+	join(process.env.PROGRAMFILES || "", "yt-dlp"),
+	join(process.env.PROGRAMFILES || "", "ffmpeg", "bin"),
+	join(process.env.PROGRAMFILES || "", "ffmpeg"),
+	"C:\\ffmpeg\\bin",
+	"C:\\ffmpeg",
+	"C:\\yt-dlp",
+	"C:\\Tools",
+	// pip / python scripts
+	process.env.LOCALAPPDATA
+		? join(process.env.LOCALAPPDATA, "Programs", "Python", "Python311", "Scripts")
+		: "",
+	process.env.LOCALAPPDATA
+		? join(process.env.LOCALAPPDATA, "Programs", "Python", "Python312", "Scripts")
+		: "",
+	process.env.LOCALAPPDATA
+		? join(process.env.LOCALAPPDATA, "Programs", "Python", "Python313", "Scripts")
+		: "",
+	process.env.USERPROFILE ? join(process.env.USERPROFILE, ".local", "bin") : "",
+	process.env.APPDATA ? join(process.env.APPDATA, "Python", "Scripts") : "",
+];
 
-const EXTRA_PATH = EXTRA_PATHS.filter(Boolean).join(delimiter);
+const UNIX_EXTRA_PATHS = [
+	"/usr/local/bin",
+	"/usr/bin",
+	"/bin",
+	"/snap/bin",
+	process.env.HOME ? join(process.env.HOME, ".local", "bin") : "",
+];
+
+const EXTRA_PATH = (IS_WINDOWS ? WIN_EXTRA_PATHS : UNIX_EXTRA_PATHS)
+	.filter(Boolean)
+	.join(delimiter);
 
 function execWithPath(cmd: string, timeout = 10000): string {
 	const env = {
@@ -47,17 +72,62 @@ function execWithPath(cmd: string, timeout = 10000): string {
 }
 
 function checkBinary(name: string, versionFlag: string): PrereqResult {
+	// First try: run directly with expanded PATH
 	try {
 		const output = execWithPath(`${name} ${versionFlag}`);
 		const firstLine = output.split("\n")[0] ?? "";
 		return { name, status: "pass", message: "Installed", detail: firstLine };
 	} catch {
-		return { name, status: "fail", message: "Not found — install it first", detail: "" };
+		// ignore
 	}
+
+	// Second try on Windows: use 'where' to find it system-wide
+	if (IS_WINDOWS) {
+		try {
+			const wherePath = execWithPath(`where ${name}`);
+			if (wherePath) {
+				// Found it — try running from full path
+				const fullPath = wherePath.split("\n")[0]?.trim() || "";
+				try {
+					const output = execSync(`"${fullPath}" ${versionFlag}`, {
+						timeout: 10000,
+						encoding: "utf-8",
+						stdio: ["ignore", "pipe", "pipe"],
+						shell: "cmd.exe",
+					}).trim();
+					const firstLine = output.split("\n")[0] ?? "";
+					return {
+						name,
+						status: "pass",
+						message: "Installed",
+						detail: `${firstLine} (${fullPath})`,
+					};
+				} catch {
+					return {
+						name,
+						status: "warn",
+						message: `Found at ${fullPath} but failed to get version`,
+					};
+				}
+			}
+		} catch {
+			// where command failed — not found
+		}
+	}
+
+	return {
+		name,
+		status: "fail",
+		message: IS_WINDOWS
+			? "Not found — install it and make sure it's in your PATH"
+			: "Not found — install it first",
+		detail: IS_WINDOWS
+			? "Try: winget install yt-dlp / winget install ffmpeg"
+			: "",
+	};
 }
 
 function checkRapidApi(): PrereqResult {
-	// Try to read from the API server's .env file
 	try {
 		const envPath = join(process.cwd(), "..", "functions", ".env");
 		const envContent = readFileSync(envPath, "utf-8");
@@ -76,10 +146,9 @@ function checkRapidApi(): PrereqResult {
 			};
 		}
 	} catch {
-		// .env not readable, fall through
+		// fall through
 	}
 
-	// Fallback: check process env
 	const keys = (process.env.RAPIDAPI_API_KEYS || "")
 		.split(",")
 		.map((k) => k.trim())
@@ -102,10 +171,9 @@ function checkRapidApi(): PrereqResult {
 }
 
 function checkApiServer(): PrereqResult {
-	// Use Node fetch instead of curl for cross-platform compatibility
 	try {
 		const fetchCmd = IS_WINDOWS
-			? `powershell -Command "(Invoke-WebRequest -Uri '${API_BASE}/healthz' -TimeoutSec 5 -UseBasicParsing).Content"`
+			? `powershell -NoProfile -Command "(Invoke-WebRequest -Uri '${API_BASE}/healthz' -TimeoutSec 5 -UseBasicParsing).Content"`
 			: `curl -sf --max-time 5 ${API_BASE}/healthz`;
 		const output = execWithPath(fetchCmd, 10000);
 		const parsed = JSON.parse(output);
