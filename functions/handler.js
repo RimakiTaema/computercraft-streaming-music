@@ -417,20 +417,39 @@ async function handleSearch(search, res, requestMajor) {
   // --- Spotify URL (metadata -> YouTube match) ---
   if (platform === "spotify") {
     try {
+      // Step 1: Try yt-dlp directly with Spotify URL (works if spotdl/spotify plugin installed)
+      try {
+        const info = await ytdlpGetInfo(search);
+        if (info && info.id) {
+          console.log("[search] spotify direct via yt-dlp ok");
+          return respondWithLatin1Json(res, [{
+            id: info.id,
+            name: replaceNonExtendedASCII(info.title || "Unknown"),
+            artist: `${toHMS(Number(info.duration || 0))} · ${replaceNonExtendedASCII(info.uploader || info.channel || info.artist || "Unknown Artist")}`,
+            platform: "spotify",
+            download_url: info.webpage_url || search,
+          }]);
+        }
+      } catch {
+        // yt-dlp can't handle Spotify URLs directly, fall back to oEmbed + YouTube search
+      }
+
+      // Step 2: Get metadata from Spotify oEmbed, search YouTube
       const oembedUrl = `https://open.spotify.com/oembed?url=${encodeURIComponent(search)}`;
       const oembedRes = await fetchWithTimeout(oembedUrl, { method: "GET" });
       if (oembedRes.ok) {
         const meta = await oembedRes.json();
-        const trackTitle = replaceNonExtendedASCII(meta.title || "Unknown");
-        const searchQuery = trackTitle;
-        console.log(`[search] spotify oembed ok, searching youtube for: "${searchQuery}"`);
-        const ytResults = await ytdlpSearch(searchQuery, 3);
+        // oEmbed title is usually "Track - Artist" or just "Track"
+        const rawTitle = replaceNonExtendedASCII(meta.title || "Unknown");
+        // Add "audio" to help YouTube find the right match instead of MVs/covers
+        const searchQuery = `${rawTitle} audio`;
+        console.log(`[search] spotify oEmbed: "${rawTitle}", searching youtube for: "${searchQuery}"`);
+        const ytResults = await ytdlpSearch(searchQuery, 5);
         if (ytResults.length > 0) {
-          const results = ytResults.map((r) => ({
+          return respondWithLatin1Json(res, ytResults.map((r) => ({
             ...r,
             platform: "spotify",
-          }));
-          return respondWithLatin1Json(res, results);
+          })));
         }
       }
     } catch (err) {
