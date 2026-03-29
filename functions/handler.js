@@ -192,6 +192,10 @@ async function handleAudioDownload(sourceUrl, res, clientIp) {
   const streamId = `stream_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const streamMeta = registerStream(streamId, sourceUrl, clientIp);
 
+  // Disable socket timeout for long audio streams (default is 2min which kills 2hr+ songs)
+  if (res.socket) res.socket.setTimeout(0);
+  if (res.req?.socket) res.req.socket.setTimeout(0);
+
   return new Promise((resolve, reject) => {
     // yt-dlp: extract best audio, output raw audio to stdout
     const ytdlpArgs = ["-f", "bestaudio", "--no-playlist", "--no-exec", "--no-batch", "-o", "-"];

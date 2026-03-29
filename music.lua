@@ -1590,7 +1590,7 @@ local function audioLoop()
 				playing_status = 0
 				needs_next_chunk = 1
 
-				http.request({ url = last_download_url, binary = true })
+				http.request({ url = last_download_url, binary = true, timeout = 14400 })
 				is_loading = true
 				clearVisualizer()
 				decoder = require("cc.audio.dfpwm").make_decoder()

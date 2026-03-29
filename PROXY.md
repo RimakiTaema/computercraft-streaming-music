@@ -111,11 +111,11 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
 
-        # Stream-friendly: no buffering, long timeout
+        # Stream-friendly: no buffering, 4hr timeout for long songs
         proxy_buffering off;
         proxy_request_buffering off;
-        proxy_read_timeout 300s;
-        proxy_send_timeout 300s;
+        proxy_read_timeout 14400s;
+        proxy_send_timeout 14400s;
     }
 
     # General API — moderate limits

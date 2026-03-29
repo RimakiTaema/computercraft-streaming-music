@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 export interface PrereqResult {
 	name: string;
@@ -10,28 +10,39 @@ export interface PrereqResult {
 }
 
 const API_BASE = process.env.API_URL || "http://localhost:8080";
+const IS_WINDOWS = process.platform === "win32";
 
-// Common binary search paths for non-login shells
-const EXTRA_PATH = [
-	"/usr/local/bin",
-	"/usr/bin",
-	"/bin",
-	"/snap/bin",
-	"/home/*/.local/bin",
-	process.env.HOME ? `${process.env.HOME}/.local/bin` : "",
-].filter(Boolean).join(":");
+// Extra binary search paths (platform-aware)
+const EXTRA_PATHS = IS_WINDOWS
+	? [
+			join(process.env.LOCALAPPDATA || "", "Programs", "yt-dlp"),
+			join(process.env.LOCALAPPDATA || "", "Programs", "ffmpeg", "bin"),
+			join(process.env.PROGRAMFILES || "", "yt-dlp"),
+			join(process.env.PROGRAMFILES || "", "ffmpeg", "bin"),
+			process.env.USERPROFILE ? join(process.env.USERPROFILE, "scoop", "shims") : "",
+			process.env.USERPROFILE ? join(process.env.USERPROFILE, ".local", "bin") : "",
+		]
+	: [
+			"/usr/local/bin",
+			"/usr/bin",
+			"/bin",
+			"/snap/bin",
+			process.env.HOME ? join(process.env.HOME, ".local", "bin") : "",
+		];
+
+const EXTRA_PATH = EXTRA_PATHS.filter(Boolean).join(delimiter);
 
 function execWithPath(cmd: string, timeout = 10000): string {
 	const env = {
 		...process.env,
-		PATH: `${process.env.PATH || ""}:${EXTRA_PATH}`,
+		PATH: `${process.env.PATH || ""}${delimiter}${EXTRA_PATH}`,
 	};
 	return execSync(cmd, {
 		timeout,
 		encoding: "utf-8",
 		stdio: ["ignore", "pipe", "pipe"],
 		env,
-		shell: "/bin/bash",
+		shell: IS_WINDOWS ? "cmd.exe" : "/bin/bash",
 	}).trim();
 }
 
@@ -46,7 +57,7 @@ function checkBinary(name: string, versionFlag: string): PrereqResult {
 }
 
 function checkRapidApi(): PrereqResult {
-	// Try to read from the API server's env by checking the functions/.env file
+	// Try to read from the API server's .env file
 	try {
 		const envPath = join(process.cwd(), "..", "functions", ".env");
 		const envContent = readFileSync(envPath, "utf-8");
@@ -91,8 +102,12 @@ function checkRapidApi(): PrereqResult {
 }
 
 function checkApiServer(): PrereqResult {
+	// Use Node fetch instead of curl for cross-platform compatibility
 	try {
-		const output = execWithPath(`curl -sf --max-time 5 ${API_BASE}/healthz`);
+		const fetchCmd = IS_WINDOWS
+			? `powershell -Command "(Invoke-WebRequest -Uri '${API_BASE}/healthz' -TimeoutSec 5 -UseBasicParsing).Content"`
+			: `curl -sf --max-time 5 ${API_BASE}/healthz`;
+		const output = execWithPath(fetchCmd, 10000);
 		const parsed = JSON.parse(output);
 		if (parsed.ok) {
 			return {

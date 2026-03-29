@@ -336,13 +336,18 @@ app.get("/healthz", (_req, res) => {
   res.status(200).json({ ok: true });
 });
 
-app.listen(port, () => {
+const server = app.listen(port, () => {
   console.log(`standalone ipod api listening on :${port}`);
   console.log(`dashboard available at http://localhost:${port}/dashboard`);
   if (!DASHBOARD_PASSWORD) {
     console.warn("[!] DASHBOARD_PASSWORD not set — dashboard is unprotected. Set it in .env");
   }
 });
+
+// Allow long-running audio streams (default 2min timeout kills songs >2hr)
+server.timeout = 0;           // No socket timeout
+server.keepAliveTimeout = 0;  // No keep-alive timeout
+server.headersTimeout = 0;    // No headers timeout
 
 // ============================================================
 // LOGIN PAGE
