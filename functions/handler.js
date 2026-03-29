@@ -187,6 +187,10 @@ export async function ipodHandler(req, res) {
   }
 }
 
+const IS_WIN = process.platform === "win32";
+const YTDLP_BIN = IS_WIN ? "yt-dlp.exe" : "yt-dlp";
+const FFMPEG_BIN = IS_WIN ? "ffmpeg.exe" : "ffmpeg";
+
 async function handleAudioDownload(sourceUrl, res, clientIp) {
   console.log(`[dl] starting yt-dlp + ffmpeg pipeline for ${sourceUrl.slice(0, 80)}`);
   const streamId = `stream_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -205,10 +209,11 @@ async function handleAudioDownload(sourceUrl, res, clientIp) {
     }
     ytdlpArgs.push(sourceUrl);
 
-    const ytdlp = spawn("yt-dlp", ytdlpArgs, { stdio: ["ignore", "pipe", "pipe"] });
+    const spawnOpts = { stdio: ["ignore", "pipe", "pipe"], ...(IS_WIN ? { shell: true } : {}) };
+    const ytdlp = spawn(YTDLP_BIN, ytdlpArgs, spawnOpts);
 
     // ffmpeg: convert to DFPWM for ComputerCraft
-    const ffmpeg = spawn("ffmpeg", [
+    const ffmpeg = spawn(FFMPEG_BIN, [
       "-i", "pipe:0",
       "-analyzeduration", "0",
       "-loglevel", "warning",
@@ -216,7 +221,7 @@ async function handleAudioDownload(sourceUrl, res, clientIp) {
       "-ar", "48000",
       "-ac", "1",
       "pipe:1",
-    ], { stdio: ["pipe", "pipe", "pipe"] });
+    ], { stdio: ["pipe", "pipe", "pipe"], ...(IS_WIN ? { shell: true } : {}) });
 
     let ytdlpStderr = "";
     let ffmpegStderr = "";
@@ -630,7 +635,7 @@ function ytdlpExec(args) {
     const fullArgs = ["--no-exec", "--no-batch", ...args];
     if (hasCookies) fullArgs.push("--cookies", COOKIES_PATH);
 
-    const proc = spawn("yt-dlp", fullArgs, { stdio: ["ignore", "pipe", "pipe"] });
+    const proc = spawn(YTDLP_BIN, fullArgs, { stdio: ["ignore", "pipe", "pipe"], ...(IS_WIN ? { shell: true } : {}) });
     let stdout = "";
     let stderr = "";
 
