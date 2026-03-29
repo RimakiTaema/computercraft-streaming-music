@@ -5,7 +5,6 @@ module.exports = {
 			script: "standalone-server.js",
 			cwd: "./functions",
 			interpreter: "node",
-			node_args: "--experimental-modules",
 			env: {
 				NODE_ENV: "production",
 				PORT: 8080,
@@ -22,8 +21,8 @@ module.exports = {
 		},
 		{
 			name: "ipod-web",
-			script: "node_modules/.bin/next",
-			args: "start",
+			script: "start-next.js",
+			interpreter: "node",
 			cwd: "./web",
 			env: {
 				NODE_ENV: "production",
