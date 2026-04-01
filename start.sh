@@ -35,7 +35,7 @@ cd functions
 if command -v bun &>/dev/null; then
     bun install --frozen-lockfile 2>/dev/null || bun install
 else
-    npm install --omit=dev
+    npm install
 fi
 cd ..
 
@@ -45,7 +45,7 @@ cd web
 if command -v bun &>/dev/null; then
     bun install --frozen-lockfile 2>/dev/null || bun install
 else
-    npm install --omit=dev
+    npm install
 fi
 info "Building web dashboard..."
 if command -v bun &>/dev/null; then
