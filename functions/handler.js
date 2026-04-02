@@ -233,12 +233,6 @@ function findBin(name) {
 const YTDLP_BIN = findBin("yt-dlp");
 const FFMPEG_BIN = findBin("ffmpeg");
 
-// YouTube bot-detection bypass args.
-// iOS client works great on datacenter IPs but is INCOMPATIBLE with cookies —
-// yt-dlp silently skips it and falls back to a client that serves images only.
-// Strategy:
-//   WITH cookies  → web client  (cookies carry auth, no special client needed)
-//   WITHOUT cookies → ios client (bypasses bot-detection on VPS/datacenter IPs)
 function getYtBypassArgs(withCookies) {
   if (withCookies) {
     return ["--extractor-args", "youtube:player_client=web"];
@@ -264,7 +258,9 @@ async function handleAudioDownload(sourceUrl, res, clientIp) {
 
   return new Promise((resolve, reject) => {
     // yt-dlp: extract best audio, output raw audio to stdout
-    const ytdlpArgs = ["-f", "bestaudio", "--no-playlist", "--no-exec", "--no-batch", "-o", "-",
+    // "bestaudio/best" fallback lets ffmpeg extract audio from a muxed stream
+    // if YouTube doesn't serve a separate audio-only format
+    const ytdlpArgs = ["-f", "bestaudio/best", "--no-playlist", "--no-exec", "--no-batch", "-o", "-",
       ...getYtBypassArgs(hasCookies),
     ];
     if (hasCookies) {
@@ -276,10 +272,14 @@ async function handleAudioDownload(sourceUrl, res, clientIp) {
     const ytdlp = spawnBin(YTDLP_BIN, ytdlpArgs, { stdio: ["ignore", "pipe", "pipe"] });
 
     // ffmpeg: convert to DFPWM for ComputerCraft
+    // analyzeduration/probesize bumped up to handle muxed video+audio streams
+    // when YouTube doesn't serve a separate audio-only format
     const ffmpeg = spawnBin(FFMPEG_BIN, [
       "-i", "pipe:0",
-      "-analyzeduration", "0",
+      "-analyzeduration", "10M",
+      "-probesize", "10M",
       "-loglevel", "warning",
+      "-vn",
       "-f", "dfpwm",
       "-ar", "48000",
       "-ac", "1",
