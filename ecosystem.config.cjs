@@ -1,3 +1,7 @@
+const apiPort = Number(process.env.API_PORT || process.env.PORT || 8080);
+const webPort = Number(process.env.WEB_PORT || 3000);
+const apiUrl = process.env.API_URL || `http://localhost:${apiPort}`;
+
 module.exports = {
 	apps: [
 		{
@@ -7,7 +11,7 @@ module.exports = {
 			interpreter: "node",
 			env: {
 				NODE_ENV: "production",
-				PORT: 8080,
+				PORT: apiPort,
 			},
 			instances: 1,
 			autorestart: true,
@@ -26,8 +30,8 @@ module.exports = {
 			cwd: "./web",
 			env: {
 				NODE_ENV: "production",
-				PORT: 3000,
-				API_URL: "http://localhost:8080",
+				PORT: webPort,
+				API_URL: apiUrl,
 			},
 			instances: 1,
 			autorestart: true,
