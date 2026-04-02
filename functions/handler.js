@@ -233,6 +233,13 @@ function findBin(name) {
 const YTDLP_BIN = findBin("yt-dlp");
 const FFMPEG_BIN = findBin("ffmpeg");
 
+// YouTube bot-detection bypass: use iOS player client + matching user-agent
+// This avoids the "Sign in to confirm" error on VPS/datacenter IPs
+const YT_BYPASS_ARGS = [
+  "--extractor-args", "youtube:player_client=ios",
+  "--user-agent", "com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)",
+];
+
 function spawnBin(bin, args, opts = {}) {
   return spawn(bin, args, { ...opts, env: { ...SPAWN_ENV, ...opts.env }, ...(IS_WIN ? { shell: true } : {}) });
 }
@@ -248,7 +255,9 @@ async function handleAudioDownload(sourceUrl, res, clientIp) {
 
   return new Promise((resolve, reject) => {
     // yt-dlp: extract best audio, output raw audio to stdout
-    const ytdlpArgs = ["-f", "bestaudio", "--no-playlist", "--no-exec", "--no-batch", "-o", "-"];
+    const ytdlpArgs = ["-f", "bestaudio", "--no-playlist", "--no-exec", "--no-batch", "-o", "-",
+      ...YT_BYPASS_ARGS,
+    ];
     if (hasCookies) {
       ytdlpArgs.push("--cookies", COOKIES_PATH);
       console.log("[dl] using cookies.txt");
@@ -732,7 +741,7 @@ function sleep(ms) {
 
 function ytdlpExec(args) {
   return new Promise((resolve, reject) => {
-    const fullArgs = ["--no-exec", "--no-batch", ...args];
+    const fullArgs = ["--no-exec", "--no-batch", ...YT_BYPASS_ARGS, ...args];
     if (hasCookies) fullArgs.push("--cookies", COOKIES_PATH);
 
     const proc = spawnBin(YTDLP_BIN, fullArgs, { stdio: ["ignore", "pipe", "pipe"] });
