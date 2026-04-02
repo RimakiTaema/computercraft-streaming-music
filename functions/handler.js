@@ -568,6 +568,42 @@ async function handleSearch(search, res, requestMajor) {
     return respondWithLatin1Json(res, []);
   }
 
+  // --- YouTube Music URL: album/browse (yt-dlp fallback) ---
+  const youtube_music_browse_parts = search.match(/music\.youtube\.com\/browse\/([\w\-]+)/i);
+  const youtube_music_browse_match = youtube_music_browse_parts && youtube_music_browse_parts[1];
+  if (youtube_music_browse_match) {
+    try {
+      const items = await ytdlpGetPlaylist(search);
+      if (items && items.length > 0 && requestMajor >= 2) {
+        console.log(`[search] yt music browse via yt-dlp ok (${items.length} items)`);
+        return respondWithLatin1Json(res, [{
+          id: youtube_music_browse_match,
+          name: replaceNonExtendedASCII(items[0]._playlist_title || "YouTube Music Album"),
+          artist: `Album · ${items.length} tracks`,
+          type: "playlist",
+          platform: "youtube_music",
+          playlist_items: items.map((pi) => ({
+            id: pi.id,
+            name: replaceNonExtendedASCII(pi.title || "Unknown"),
+            artist: `${toHMS(Number(pi.duration || 0))} · ${replaceNonExtendedASCII((pi.channel || "Unknown Artist").split(" - Topic")[0])}`,
+          })),
+        }]);
+      }
+
+      if (items && items.length > 0) {
+        const first = items[0];
+        return respondWithLatin1Json(res, [{
+          id: first.id,
+          name: replaceNonExtendedASCII(first.title || "Unknown"),
+          artist: `${toHMS(Number(first.duration || 0))} · ${replaceNonExtendedASCII((first.channel || "Unknown Artist").split(" - Topic")[0])}`,
+          platform: "youtube_music",
+        }]);
+      }
+    } catch (err) {
+      console.warn(`[search] yt music browse failed, falling back to text search: ${err.message}`);
+    }
+  }
+
   // --- Text search (defaults to YouTube) ---
   try {
     if (HAS_RAPIDAPI) {
