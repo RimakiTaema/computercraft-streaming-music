@@ -14,9 +14,11 @@ local last_search = nil
 local last_search_url = nil
 local search_results = nil
 local search_error = false
+local search_error_message = nil
 local in_search_result = false
 local clicked_result = nil
 local search_scroll = 0
+local search_ignore_next_s_char = false
 
 -- Changelog state
 local changelog_results = nil
@@ -210,6 +212,48 @@ local function drawHintBar(text)
 	term.write((" "):rep(width))
 	term.setCursorPos(2, height)
 	term.write(ellipsize(text, width - 2))
+end
+
+local function drawSearchInputLine(input, input_y)
+	local tw = select(1, term.getSize())
+	term.setCursorPos(1, input_y)
+	term.setBackgroundColor(C_ACCENT)
+	term.setTextColor(colors.black)
+	term.clearLine()
+	term.write(ellipsize(input, tw - 1))
+end
+
+local function readStickySearchInput(input_y)
+	local input = ""
+	drawSearchInputLine(input, input_y)
+
+	while true do
+		local event, p1 = os.pullEvent()
+		if event == "char" then
+			if search_ignore_next_s_char and string.lower(p1) == "s" then
+				search_ignore_next_s_char = false
+			else
+				search_ignore_next_s_char = false
+				input = input .. p1
+				drawSearchInputLine(input, input_y)
+			end
+		elseif event == "paste" then
+			search_ignore_next_s_char = false
+			input = input .. p1
+			drawSearchInputLine(input, input_y)
+		elseif event == "key" then
+			search_ignore_next_s_char = false
+			if p1 == keys.enter or p1 == keys.numPadEnter then
+				return input
+			elseif p1 == keys.backspace and #input > 0 then
+				input = string.sub(input, 1, #input - 1)
+				drawSearchInputLine(input, input_y)
+			end
+		elseif event == "term_resize" then
+			width, height = term.getSize()
+			drawSearchInputLine(input, input_y)
+		end
+	end
 end
 
 local function loadingText()
@@ -588,6 +632,9 @@ local function drawSearch()
 			centerText(loadingText(), math.floor(height / 2), C_LOADING)
 		elseif search_error then
 			centerText("Search failed", math.floor(height / 2), C_ERROR)
+			if search_error_message then
+				centerText(ellipsize(search_error_message, width - 4), math.floor(height / 2) + 1, C_DIM)
+			end
 		elseif not last_search then
 			centerText("Search YouTube, SoundCloud, Spotify", math.floor(height / 2), C_DIM)
 			centerText("or paste a supported audio URL", math.floor(height / 2) + 1, C_DIM)
@@ -1058,6 +1105,7 @@ end
 local function handleSearchClick(x, y)
 	if y == 3 and x >= 4 and x <= width - 1 then
 		waiting_for_input = true
+		search_ignore_next_s_char = false
 		redrawScreen()
 		return
 	end
@@ -1295,16 +1343,15 @@ local function uiLoop()
 			if has_monitor then
 				term.redirect(original_term)
 				local tw, th = original_term.getSize()
-				original_term.setBackgroundColor(colors.white)
+				original_term.setBackgroundColor(C_ACCENT)
 				original_term.setTextColor(colors.black)
 				original_term.setCursorPos(1, math.floor(th / 2) + 1)
 				original_term.clearLine()
+				original_term.write("")
 			else
 				term.setCursorPos(5, 3)
-				term.setBackgroundColor(C_ACCENT)
-				term.setTextColor(colors.black)
 			end
-			local input = read()
+			local input = readStickySearchInput(has_monitor and (math.floor(select(2, original_term.getSize()) / 2) + 1) or 3)
 			if has_monitor then
 				term.redirect(monitor)
 				width, height = monitor.getSize()
@@ -1313,15 +1360,17 @@ local function uiLoop()
 			if string.len(input) > 0 then
 				last_search = input
 				search_scroll = 0
-				last_search_url = api_base_url .. "?v=" .. version .. "&search=" .. textutils.urlEncode(input)
+				last_search_url = api_base_url .. "?v=" .. version .. "&search=" .. textutils.urlEncode(input) .. "&t=" .. tostring(math.floor(os.clock() * 1000))
 				http.request(last_search_url)
 				search_results = nil
 				search_error = false
+				search_error_message = nil
 			else
 				last_search = nil
 				last_search_url = nil
 				search_results = nil
 				search_error = false
+				search_error_message = nil
 			end
 
 			waiting_for_input = false
@@ -1540,6 +1589,7 @@ local function uiLoop()
 					-- S to search
 					if key == keys.s and tab == 3 and not in_search_result then
 						waiting_for_input = true
+						search_ignore_next_s_char = true
 						redrawScreen()
 					end
 				end,
@@ -1719,10 +1769,11 @@ local function httpLoop()
 				end
 			end,
 			function()
-				local event, url = os.pullEvent("http_failure")
+				local event, url, reason = os.pullEvent("http_failure")
 
 				if url == last_search_url then
 					search_error = true
+					search_error_message = reason and tostring(reason) or nil
 					os.queueEvent("redraw_screen")
 				end
 				if url == last_changelog_url then
