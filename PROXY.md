@@ -9,6 +9,37 @@ Internet → nginx (:443) → API  (localhost:8080)
                         → Web  (localhost:3000)
 ```
 
+## Playit free UDP bridge
+
+Playit HTTP(S) tunnels are a Premium feature, so a free/UDP-only tunnel cannot be used directly as the `music.lua` API URL. This repo includes an experimental HTTP-to-UDP relay for that case:
+
+```
+ComputerCraft HTTP client
+  → public HTTP relay
+  → Playit UDP tunnel
+  → local UDP bridge
+  → standalone API on localhost:8080
+```
+
+Run the normal API and local bridge on the home/server machine:
+
+```bash
+cd functions
+npm start
+UDP_PORT=19132 npm run start:udp-bridge
+```
+
+Create a Playit UDP tunnel to `UDP_PORT`, then run the public relay somewhere that can expose HTTP:
+
+```bash
+cd functions
+PLAYIT_UDP_HOST=<playit-host> PLAYIT_UDP_PORT=<playit-port> RELAY_PORT=8081 npm run start:http-udp-relay
+```
+
+Point `music.lua` at the public relay HTTP URL. The Playit UDP address is only for the relay, not for ComputerCraft.
+
+For production, nginx or Playit Premium HTTP(S)/TCP is still simpler and more reliable than tunneling long audio streams over UDP.
+
 ---
 
 ## Prerequisites

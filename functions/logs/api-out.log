@@ -1,0 +1,33 @@
+2026-07-03T22:23:16: [init] cookies.txt: not found
+2026-07-03T22:23:16: [init] 1 API key(s) loaded, first key starts with: 26534980...
+2026-07-03T22:23:16: [init] yt-dlp: using name directly (hope it's in PATH)
+2026-07-03T22:23:16: [init] ffmpeg: resolved to /opt/homebrew/bin/ffmpeg
+2026-07-03T22:23:16: standalone ipod api listening on :8080
+2026-07-03T22:23:16: dashboard available at http://localhost:8080/dashboard
+2026-07-03T22:25:22: [init] cookies.txt: not found
+2026-07-03T22:25:22: [init] 1 API key(s) loaded, first key starts with: 26534980...
+2026-07-03T22:25:22: [init] yt-dlp: resolved to /opt/homebrew/bin/yt-dlp
+2026-07-03T22:25:22: [init] ffmpeg: resolved to /opt/homebrew/bin/ffmpeg
+2026-07-03T22:25:22: standalone ipod api listening on :8080
+2026-07-03T22:25:22: dashboard available at http://localhost:8080/dashboard
+2026-07-03T22:26:19: [init] cookies.txt: not found
+2026-07-03T22:26:19: [init] 1 API key(s) loaded, first key starts with: 26534980...
+2026-07-03T22:26:19: [init] yt-dlp: resolved to /opt/homebrew/bin/yt-dlp
+2026-07-03T22:26:19: [init] ffmpeg: resolved to /opt/homebrew/bin/ffmpeg
+2026-07-03T22:26:19: standalone ipod api listening on :8080
+2026-07-03T22:26:19: dashboard available at http://localhost:8080/dashboard
+2026-07-03T22:28:19: [init] cookies.txt: not found
+2026-07-03T22:28:19: [init] 1 API key(s) loaded, first key starts with: 26534980...
+2026-07-03T22:28:19: [init] yt-dlp: resolved to /opt/homebrew/bin/yt-dlp
+2026-07-03T22:28:19: [init] ffmpeg: resolved to /opt/homebrew/bin/ffmpeg
+2026-07-03T22:28:19: standalone ipod api listening on :8080
+2026-07-03T22:28:19: dashboard available at http://localhost:8080/dashboard
+2026-07-03T22:55:06: --> GET / from ::1
+2026-07-03T22:55:06: [handler] bad request - no id/search/changelogs param
+2026-07-03T22:55:06: <-- GET / 400 (3ms)
+2026-07-03T23:01:54: [init] cookies.txt: not found
+2026-07-03T23:01:54: [init] 1 API key(s) loaded, first key starts with: 26534980...
+2026-07-03T23:01:54: [init] yt-dlp: resolved to /opt/homebrew/bin/yt-dlp
+2026-07-03T23:01:54: [init] ffmpeg: resolved to /opt/homebrew/bin/ffmpeg
+2026-07-03T23:01:54: standalone ipod api listening on :8080
+2026-07-03T23:01:54: dashboard available at http://localhost:8080/dashboard

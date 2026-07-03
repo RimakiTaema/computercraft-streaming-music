@@ -4,10 +4,14 @@
   },
   "scripts": {
     "start": "node standalone-server.js",
-    "dev": "nodemon standalone-server.js"
+    "dev": "nodemon standalone-server.js",
+    "start:udp-bridge": "node udp-bridge-server.js",
+    "start:http-udp-relay": "node http-udp-relay.js"
   },
   "bin": {
-    "ipod-api": "./standalone-server.js"
+    "ipod-api": "./standalone-server.js",
+    "ipod-udp-bridge": "./udp-bridge-server.js",
+    "ipod-http-udp-relay": "./http-udp-relay.js"
   },
   "dependencies": {
     "dotenv": "^17.3.1",

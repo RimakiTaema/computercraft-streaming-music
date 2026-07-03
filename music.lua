@@ -564,13 +564,18 @@ local function drawSearch()
 	term.write("\x06 ")
 	local bar_start = 4
 	local bar_end = width - 1
+	local bar_width = bar_end - bar_start + 1
+	local search_focused = waiting_for_input
 	term.setCursorPos(bar_start, 3)
-	term.setBackgroundColor(C_SEARCH_BG)
-	term.write(string.rep(" ", bar_end - bar_start + 1))
+	term.setBackgroundColor(search_focused and C_ACCENT or C_SEARCH_BG)
+	term.write(string.rep(" ", bar_width))
 	term.setCursorPos(bar_start + 1, 3)
-	if last_search and #last_search > 0 then
+	if search_focused then
+		term.setTextColor(colors.black)
+		term.write(ellipsize("> type search, then Enter", bar_width - 2))
+	elseif last_search and #last_search > 0 then
 		term.setTextColor(C_SEARCH_FG)
-		term.write(ellipsize(last_search, bar_end - bar_start - 1))
+		term.write(ellipsize(last_search, bar_width - 2))
 	else
 		term.setTextColor(C_SEARCH_PH)
 		term.write("Search or paste URL...")
@@ -584,10 +589,10 @@ local function drawSearch()
 		elseif search_error then
 			centerText("Search failed", math.floor(height / 2), C_ERROR)
 		elseif not last_search then
-			centerText("YouTube, SoundCloud, Spotify", math.floor(height / 2), C_DIM)
-			centerText("or paste any audio URL", math.floor(height / 2) + 1, C_DIM)
+			centerText("Search YouTube, SoundCloud, Spotify", math.floor(height / 2), C_DIM)
+			centerText("or paste a supported audio URL", math.floor(height / 2) + 1, C_DIM)
 		end
-		drawHintBar("S:search  Click bar to type")
+		drawHintBar(search_focused and "Typing on computer keyboard  Enter:search" or "S:search  Click bar to type")
 		return
 	end
 
@@ -639,9 +644,14 @@ local function drawSearch()
 			if idx > #search_results then break end
 			local item = search_results[idx]
 			local y = list_start + i - 1
+			local row_bg = (i % 2 == 0) and C_BG or colors.gray
+			term.setCursorPos(1, y)
+			term.setBackgroundColor(row_bg)
+			term.write(string.rep(" ", width))
 			local icon = platformIcon(item.platform)
 			term.setCursorPos(2, y)
 			term.setTextColor(C_ACCENT)
+			term.setBackgroundColor(row_bg)
 			term.write(icon .. " ")
 			term.setTextColor(C_TITLE)
 			local name = ellipsize(item.name or "Unknown", math.floor(width * 0.5))
@@ -661,15 +671,25 @@ local function drawSearch()
 			if idx > #search_results then break end
 			local item = search_results[idx]
 			local y = list_start + (i - 1) * 2
+			local row_bg = (i % 2 == 0) and C_BG or colors.gray
+			term.setCursorPos(1, y)
+			term.setBackgroundColor(row_bg)
+			term.write(string.rep(" ", width))
+			if y + 1 <= list_end then
+				term.setCursorPos(1, y + 1)
+				term.write(string.rep(" ", width))
+			end
 			local icon = platformIcon(item.platform)
 			if item.type == "playlist" then icon = "\x10" end
 			term.setCursorPos(2, y)
 			term.setTextColor(C_ACCENT)
+			term.setBackgroundColor(row_bg)
 			term.write(icon .. " ")
 			term.setTextColor(C_TITLE)
 			term.write(ellipsize(item.name or "Unknown", width - 4))
 			term.setCursorPos(4, y + 1)
 			term.setTextColor(C_ARTIST)
+			term.setBackgroundColor(row_bg)
 			local artist_text = item.artist or ""
 			if item.type == "playlist" and item.playlist_items then
 				artist_text = artist_text .. " (" .. #item.playlist_items .. " tracks)"
@@ -698,7 +718,7 @@ local function drawSearch()
 		term.write("\x1f")
 	end
 
-	drawHintBar("Click result to play/queue  S:search  Scroll:navigate")
+	drawHintBar(search_focused and "Typing on computer keyboard  Enter:search" or "Click result to play/queue  S:search  Scroll:navigate")
 end
 
 -- ============================================================
@@ -1038,7 +1058,7 @@ end
 local function handleSearchClick(x, y)
 	if y == 3 and x >= 4 and x <= width - 1 then
 		waiting_for_input = true
-		paintutils.drawFilledBox(4, 3, width - 1, 3, colors.white)
+		redrawScreen()
 		return
 	end
 
@@ -1272,58 +1292,40 @@ local function uiLoop()
 				original_term.setCursorPos(math.max(1, math.floor((tw - #tip2) / 2) + 1), math.floor(th / 2))
 				original_term.write(tip2)
 			end
-			parallel.waitForAny(
-				function()
-					if has_monitor then
-						term.redirect(original_term)
-						local tw, th = original_term.getSize()
-						original_term.setBackgroundColor(colors.white)
-						original_term.setTextColor(colors.black)
-						original_term.setCursorPos(1, math.floor(th / 2) + 1)
-						original_term.clearLine()
-					else
-						term.setCursorPos(5, 3)
-						term.setBackgroundColor(colors.white)
-						term.setTextColor(colors.black)
-					end
-					local input = read()
-					if has_monitor then
-						term.redirect(monitor)
-						width, height = monitor.getSize()
-					end
+			if has_monitor then
+				term.redirect(original_term)
+				local tw, th = original_term.getSize()
+				original_term.setBackgroundColor(colors.white)
+				original_term.setTextColor(colors.black)
+				original_term.setCursorPos(1, math.floor(th / 2) + 1)
+				original_term.clearLine()
+			else
+				term.setCursorPos(5, 3)
+				term.setBackgroundColor(C_ACCENT)
+				term.setTextColor(colors.black)
+			end
+			local input = read()
+			if has_monitor then
+				term.redirect(monitor)
+				width, height = monitor.getSize()
+			end
 
-					if string.len(input) > 0 then
-						last_search = input
-						search_scroll = 0
-						last_search_url = api_base_url .. "?v=" .. version .. "&search=" .. textutils.urlEncode(input)
-						http.request(last_search_url)
-						search_results = nil
-						search_error = false
-					else
-						last_search = nil
-						last_search_url = nil
-						search_results = nil
-						search_error = false
-					end
+			if string.len(input) > 0 then
+				last_search = input
+				search_scroll = 0
+				last_search_url = api_base_url .. "?v=" .. version .. "&search=" .. textutils.urlEncode(input)
+				http.request(last_search_url)
+				search_results = nil
+				search_error = false
+			else
+				last_search = nil
+				last_search_url = nil
+				search_results = nil
+				search_error = false
+			end
 
-					waiting_for_input = false
-					os.queueEvent("redraw_screen")
-				end,
-				function()
-					while waiting_for_input do
-						local event, button, x, y = pullClick()
-						if has_monitor or y ~= 3 or x < 4 or x > width - 1 then
-							waiting_for_input = false
-							if has_monitor then
-								term.redirect(monitor)
-								width, height = monitor.getSize()
-							end
-							os.queueEvent("redraw_screen")
-							break
-						end
-					end
-				end
-			)
+			waiting_for_input = false
+			os.queueEvent("redraw_screen")
 		else
 			parallel.waitForAny(
 				function()
@@ -1538,7 +1540,7 @@ local function uiLoop()
 					-- S to search
 					if key == keys.s and tab == 3 and not in_search_result then
 						waiting_for_input = true
-						paintutils.drawFilledBox(4, 3, width - 1, 3, colors.white)
+						redrawScreen()
 					end
 				end,
 				function()

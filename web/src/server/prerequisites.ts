@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 
@@ -11,6 +11,7 @@ export interface PrereqResult {
 
 const API_BASE = process.env.API_URL || "http://localhost:8080";
 const IS_WINDOWS = process.platform === "win32";
+const RUN_CONNECTIVITY_CHECK = process.env.RUN_CONNECTIVITY_CHECK === "true";
 
 // Common install locations per platform
 const WIN_EXTRA_PATHS = [
@@ -68,6 +69,19 @@ function execWithPath(cmd: string, timeout = 10000): string {
 		stdio: ["ignore", "pipe", "pipe"],
 		env,
 		shell: IS_WINDOWS ? "cmd.exe" : "/bin/bash",
+	}).trim();
+}
+
+function execFileWithPath(cmd: string, args: string[], timeout = 10000): string {
+	const env = {
+		...process.env,
+		PATH: `${process.env.PATH || ""}${delimiter}${EXTRA_PATH}`,
+	};
+	return execFileSync(cmd, args, {
+		timeout,
+		encoding: "utf-8",
+		stdio: ["ignore", "pipe", "pipe"],
+		env,
 	}).trim();
 }
 
@@ -170,14 +184,29 @@ function checkRapidApi(): PrereqResult {
 	};
 }
 
-function checkApiServer(): PrereqResult {
+async function fetchJsonWithTimeout(url: string, timeoutMs: number): Promise<unknown> {
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), timeoutMs);
 	try {
-		const fetchCmd = IS_WINDOWS
-			? `powershell -NoProfile -Command "(Invoke-WebRequest -Uri '${API_BASE}/healthz' -TimeoutSec 5 -UseBasicParsing).Content"`
-			: `curl -sf --max-time 5 ${API_BASE}/healthz`;
-		const output = execWithPath(fetchCmd, 10000);
-		const parsed = JSON.parse(output);
-		if (parsed.ok) {
+		const res = await fetch(url, { signal: controller.signal });
+		if (!res.ok) {
+			throw new Error(`HTTP ${res.status}`);
+		}
+		return await res.json();
+	} finally {
+		clearTimeout(timeout);
+	}
+}
+
+async function checkApiServer(): Promise<PrereqResult> {
+	try {
+		const parsed = await fetchJsonWithTimeout(`${API_BASE}/healthz`, 5000);
+		if (
+			typeof parsed === "object" &&
+			parsed !== null &&
+			"ok" in parsed &&
+			parsed.ok
+		) {
 			return {
 				name: "API Server",
 				status: "pass",
@@ -196,10 +225,21 @@ function checkApiServer(): PrereqResult {
 }
 
 function checkConnectivity(): PrereqResult {
+	if (!RUN_CONNECTIVITY_CHECK) {
+		return {
+			name: "Connectivity",
+			status: "warn",
+			message: "Live YouTube connectivity check skipped",
+			detail:
+				"Set RUN_CONNECTIVITY_CHECK=true before starting the dashboard if you want setup to run a live yt-dlp search.",
+		};
+	}
+
 	try {
-		const output = execWithPath(
-			'yt-dlp --dump-json --flat-playlist --skip-download "ytsearch1:test audio"',
-			30000,
+		const output = execFileWithPath(
+			"yt-dlp",
+			["--dump-json", "--flat-playlist", "--skip-download", "ytsearch1:test audio"],
+			5000,
 		);
 		const parsed = JSON.parse(output.split("\n")[0] ?? "{}");
 		if (parsed.id) {
@@ -210,24 +250,25 @@ function checkConnectivity(): PrereqResult {
 				detail: `Found: ${parsed.title ?? parsed.id}`,
 			};
 		}
-		return { name: "Connectivity", status: "fail", message: "yt-dlp returned no results" };
+		return { name: "Connectivity", status: "warn", message: "yt-dlp returned no results" };
 	} catch (e) {
 		const msg = e instanceof Error ? e.message : String(e);
+		const timedOut = /ETIMEDOUT|timed out|timeout/i.test(msg);
 		return {
 			name: "Connectivity",
-			status: "fail",
-			message: "Connection test failed",
-			detail: msg.slice(0, 200),
+			status: timedOut ? "warn" : "fail",
+			message: timedOut ? "Connection test timed out" : "Connection test failed",
+			detail: `${msg.slice(0, 200)}. The API can still run; this only checks whether yt-dlp can reach YouTube search right now.`,
 		};
 	}
 }
 
-export function runAllChecks(): PrereqResult[] {
+export async function runAllChecks(): Promise<PrereqResult[]> {
 	return [
 		checkBinary("yt-dlp", "--version"),
 		checkBinary("ffmpeg", "-version"),
 		checkRapidApi(),
-		checkApiServer(),
+		await checkApiServer(),
 		checkConnectivity(),
 	];
 }
