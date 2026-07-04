@@ -233,6 +233,22 @@ function findBin(name) {
 const YTDLP_BIN = findBin("yt-dlp");
 const FFMPEG_BIN = findBin("ffmpeg");
 
+function ffmpegSupportsDfpwmMuxer() {
+  try {
+    const formats = execSync(`${FFMPEG_BIN} -hide_banner -formats`, {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: SPAWN_ENV,
+    });
+    return /^\s*DE\s+dfpwm\s/m.test(formats);
+  } catch {
+    return false;
+  }
+}
+
+const HAS_FFMPEG_DFPWM_MUXER = ffmpegSupportsDfpwmMuxer();
+console.log(`[init] ffmpeg dfpwm muxer: ${HAS_FFMPEG_DFPWM_MUXER ? "available" : "not available"}`);
+
 function getYtBypassArgs(withCookies) {
   if (process.env.YTDLP_EXTRACTOR_ARGS) {
     return ["--extractor-args", process.env.YTDLP_EXTRACTOR_ARGS];
@@ -283,9 +299,10 @@ async function handleAudioDownload(sourceUrl, res, clientIp) {
       "-probesize", "10M",
       "-loglevel", "warning",
       "-vn",
-      "-f", "dfpwm",
       "-ar", "48000",
       "-ac", "1",
+      "-c:a", "dfpwm",
+      "-f", "dfpwm",
       "pipe:1",
     ], { stdio: ["pipe", "pipe", "pipe"] });
 
