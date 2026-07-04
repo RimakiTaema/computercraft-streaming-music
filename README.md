@@ -6,7 +6,7 @@
 > [!CAUTION]
 > This Fork Is no longer Using Original YTAPI Server And No Server Provided For This Fork. Self Host is required
 
-**Version:** vibe-1.0
+**Version:** 4.1.1
 
 ## How to use
 
