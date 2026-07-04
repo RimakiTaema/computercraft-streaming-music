@@ -20,6 +20,12 @@ local in_search_result = false
 local clicked_result = nil
 local search_scroll = 0
 local search_ignore_next_s_char = false
+local local_tracks = nil
+local local_scroll = 0
+local local_status = nil
+local local_download_url = nil
+local local_download_path = nil
+local LOCAL_MUSIC_DIR = "music"
 
 -- Changelog state
 local changelog_results = nil
@@ -28,6 +34,7 @@ local last_changelog_url = nil
 local in_changelog_item = false
 local clicked_changelog = nil
 local changelog_scroll = 0
+local changelog_body_scroll = 0
 
 -- Queue state
 local queue_scroll = 0
@@ -40,7 +47,8 @@ local playing = false
 local queue = {}
 local now_playing = nil
 local looping = 0 -- 0=off, 1=queue, 2=single
-local volume = 1.5
+local volume = 1.0
+local MAX_VOLUME = 2.0
 local shuffled = false
 
 local playing_id = nil
@@ -49,6 +57,9 @@ local playing_status = 0
 local is_loading = false
 local is_error = false
 local waiting_for_input = false
+local resume_positions = {}
+local current_played_seconds = 0
+local DFPWM_BYTES_PER_SECOND = 6000
 
 -- Audio
 local player_handle = nil
@@ -180,6 +191,196 @@ local function ellipsize(text, max_len)
 	return string.sub(text, 1, max_len - 3) .. "..."
 end
 
+local function getTrackKey(track)
+	if not track then return nil end
+	if track.local_path then return "local:" .. track.local_path end
+	if track.download_url then return "url:" .. track.download_url end
+	if track.id then return "id:" .. track.id end
+	return nil
+end
+
+local function makeDownloadUrl(track)
+	if not track then return nil end
+	if track.download_url then
+		return api_base_url .. "?v=" .. version .. "&url=" .. textutils.urlEncode(track.download_url)
+	elseif track.id then
+		return api_base_url .. "?v=" .. version .. "&id=" .. textutils.urlEncode(track.id)
+	end
+	return nil
+end
+
+local function sanitizeFileName(name)
+	name = name or "track"
+	name = string.gsub(name, "[/\\:*?\"<>|]", "_")
+	name = string.gsub(name, "%s+", " ")
+	name = string.gsub(name, "^%s+", "")
+	name = string.gsub(name, "%s+$", "")
+	if #name == 0 then name = "track" end
+	return string.sub(name, 1, 48)
+end
+
+local function ensureLocalMusicDir()
+	if not fs.exists(LOCAL_MUSIC_DIR) then
+		fs.makeDir(LOCAL_MUSIC_DIR)
+	end
+end
+
+local function formatBytes(bytes)
+	if not bytes then return "N/A" end
+	local units = {"B","KB","MB","GB"}
+	local b = tonumber(bytes)
+	local i = 1
+	while b >= 1024 and i < #units do
+		b = b / 1024
+		i = i + 1
+	end
+	return string.format("%.1f %s", b, units[i])
+end
+
+local function getFreeSpaceString()
+	if fs and fs.getFreeSpace then
+		local ok, free = pcall(fs.getFreeSpace)
+		if ok and free then
+			return "Storage: " .. formatBytes(free) .. " free"
+		end
+	end
+	return "Storage: N/A"
+end
+
+local function loadLocalTracks()
+	ensureLocalMusicDir()
+	local_tracks = {}
+	for _, file in ipairs(fs.list(LOCAL_MUSIC_DIR)) do
+		local path = fs.combine(LOCAL_MUSIC_DIR, file)
+		if not fs.isDir(path) and string.lower(file):match("%.dfpwm$") then
+			local name = string.gsub(file, "%.dfpwm$", "")
+			table.insert(local_tracks, {
+				id = "local:" .. path,
+				name = name,
+				artist = "Local DFPWM",
+				platform = "local",
+				local_path = path,
+			})
+		end
+	end
+	table.sort(local_tracks, function(a, b)
+		return string.lower(a.name or "") < string.lower(b.name or "")
+	end)
+end
+
+local function makeLocalTrackFromResult(result)
+	if not result then return nil end
+	if result.local_path then
+		return {
+			id = result.id,
+			name = result.name,
+			artist = result.artist,
+			platform = result.platform,
+			local_path = result.local_path,
+		}
+	end
+	return {
+		id = result.id,
+		name = result.name,
+		artist = result.artist,
+		platform = result.platform,
+		download_url = result.download_url,
+	}
+end
+
+local function startLocalDownload(result)
+	local track = makeLocalTrackFromResult(result)
+	local url = makeDownloadUrl(track)
+	if not url then
+		local_status = "Cannot save this result"
+		return false
+	end
+
+	ensureLocalMusicDir()
+	local base_name = sanitizeFileName((track.artist and #track.artist > 0 and (track.artist .. " - ") or "") .. (track.name or "track"))
+	local path = fs.combine(LOCAL_MUSIC_DIR, base_name .. ".dfpwm")
+	local i = 2
+	while fs.exists(path) do
+		path = fs.combine(LOCAL_MUSIC_DIR, base_name .. " " .. i .. ".dfpwm")
+		i = i + 1
+	end
+
+	local_download_url = url .. "&save=" .. tostring(math.floor(os.clock() * 1000))
+	local_download_path = path
+	local_status = "Saving " .. base_name .. " (" .. getFreeSpaceString() .. ")"
+	http.request({ url = local_download_url, binary = true, timeout = DOWNLOAD_REQUEST_TIMEOUT })
+	return true
+end
+
+local function saveResumePosition()
+	local key = getTrackKey(now_playing)
+	if key and current_played_seconds > 0 then
+		resume_positions[key] = current_played_seconds
+	end
+end
+
+local function resetResumePosition(track)
+	local key = getTrackKey(track)
+	if key then resume_positions[key] = nil end
+	if now_playing == track then current_played_seconds = 0 end
+end
+
+local function formatTime(seconds)
+	seconds = math.max(0, math.floor(seconds or 0))
+	local mins = math.floor(seconds / 60)
+	local secs = seconds % 60
+	return string.format("%d:%02d", mins, secs)
+end
+
+local function splitWrappedLines(text, max_width)
+	local lines = {}
+	max_width = math.max(1, max_width)
+	text = text or ""
+
+	for raw_line in string.gmatch(text .. "\n", "([^\n]*)\n") do
+		local line = raw_line
+		if #line == 0 then
+			table.insert(lines, "")
+		else
+			while #line > max_width do
+				local cut = max_width
+				for i = max_width, 1, -1 do
+					if string.sub(line, i, i) == " " then
+						cut = i - 1
+						break
+					end
+				end
+				if cut < 1 then cut = max_width end
+				table.insert(lines, string.sub(line, 1, cut))
+				line = string.sub(line, cut + 1)
+				while string.sub(line, 1, 1) == " " do
+					line = string.sub(line, 2)
+				end
+			end
+			table.insert(lines, line)
+		end
+	end
+
+	return lines
+end
+
+local function getChangelogBodyMaxScroll()
+	if not clicked_changelog then return 0 end
+	local body_lines = splitWrappedLines(clicked_changelog.body or "", width - 4)
+	local body_y = 6
+	local body_height = math.max(1, height - body_y - 1)
+	return math.max(0, #body_lines - body_height)
+end
+
+local function closePlayerHandle()
+	if player_handle then
+		pcall(function() player_handle.close() end)
+		player_handle = nil
+	end
+	playing_status = 0
+	needs_next_chunk = 0
+end
+
 local function centerText(text, y, fg, bg)
 	term.setCursorPos(math.floor((width - #text) / 2) + 1, y)
 	term.setTextColor(fg or C_TITLE)
@@ -262,6 +463,14 @@ local function loadingText()
 	return "Loading" .. dots .. string.rep(" ", 3 - #dots)
 end
 
+local function getPlayerLayout()
+	local ctrl_y = math.max(7, height - 2)
+	local info_y = math.max(5, ctrl_y - 1)
+	local viz_y = 3
+	local viz_height = math.max(3, info_y - viz_y - 1)
+	return viz_y, viz_height, info_y, ctrl_y
+end
+
 -- Fisher-Yates shuffle
 local function shuffleQueue()
 	if not shuffled or #queue < 2 then return end
@@ -276,6 +485,7 @@ local function platformIcon(platform)
 	if platform == "soundcloud" then return "\x06"
 	elseif platform == "spotify" then return "\x04"
 	elseif platform == "direct" then return "\x10"
+	elseif platform == "local" then return "\x0f"
 	else return "\x0e" end -- youtube / default
 end
 
@@ -300,7 +510,7 @@ local function updateVisualizer(audio_buffer)
 	local samples_per_bar = math.floor(#audio_buffer / bars)
 	if samples_per_bar < 1 then samples_per_bar = 1 end
 
-	local viz_height = math.max(3, height - 10)
+	local _, viz_height = getPlayerLayout()
 	for i = 1, bars do
 		local sum = 0
 		local start_idx = (i - 1) * samples_per_bar + 1
@@ -374,8 +584,8 @@ end
 
 local function drawVisualizerOnly()
 	if tab ~= 1 then return end
-	local viz_height = math.max(3, height - 10)
-	drawVisualizer(6, viz_height)
+	local viz_y, viz_height = getPlayerLayout()
+	drawVisualizer(viz_y, viz_height)
 end
 
 -- ============================================================
@@ -422,54 +632,43 @@ end
 -- ============================================================
 
 local function drawPlayer()
-	local viz_height = math.max(3, height - 10)
-	local viz_y = 6
-	local ctrl_y = viz_y + viz_height + 1
-	local vol_y = ctrl_y + 1
-
-	-- Song info
-	if now_playing then
-		term.setCursorPos(2, 3)
-		term.setTextColor(C_ACCENT)
-		term.setBackgroundColor(C_BG)
-		term.write("\x0e ")
-		term.setTextColor(C_TITLE)
-		term.write(ellipsize(now_playing.name or "Unknown", width - 4))
-
-		term.setCursorPos(4, 4)
-		term.setTextColor(C_ARTIST)
-		term.write(ellipsize(now_playing.artist or "", width - 5))
-
-		-- Platform badge
-		if now_playing.platform then
-			local badge = " " .. now_playing.platform .. " "
-			term.setCursorPos(width - #badge, 3)
-			term.setBackgroundColor(C_TAB_BG)
-			term.setTextColor(C_ACCENT)
-			term.write(badge)
-			term.setBackgroundColor(C_BG)
-		end
-	else
-		centerText("No track loaded", 3, C_DIM)
-		centerText("Search or add to queue", 4, C_DIM)
-	end
-
-	-- Status
-	term.setCursorPos(2, 5)
-	term.setBackgroundColor(C_BG)
-	if is_loading then
-		term.setTextColor(C_LOADING)
-		term.write(loadingText())
-	elseif is_error then
-		term.setTextColor(C_ERROR)
-		term.write("Error loading track")
-	end
+	local viz_y, viz_height, info_y, ctrl_y = getPlayerLayout()
 
 	-- Visualizer
 	drawVisualizer(viz_y, viz_height)
 
+	-- Compact now-playing strip
+	term.setCursorPos(1, info_y)
+	term.setBackgroundColor(C_BG)
+	term.setTextColor(C_DIM)
+	term.clearLine()
+	if now_playing then
+		local status = ""
+		if is_loading then
+			status = "  " .. loadingText()
+		elseif is_error then
+			status = "  Error"
+		elseif current_played_seconds > 0 then
+			status = "  " .. formatTime(current_played_seconds)
+		end
+
+		local platform = now_playing.platform and (" [" .. now_playing.platform .. "]") or ""
+		local title = (now_playing.name or "Unknown") .. platform
+		local artist = now_playing.artist and #now_playing.artist > 0 and (" - " .. now_playing.artist) or ""
+		term.setCursorPos(2, info_y)
+		term.setTextColor(C_ACCENT)
+		term.write(platformIcon(now_playing.platform) .. " ")
+		term.setTextColor(C_TITLE)
+		term.write(ellipsize(title .. artist .. status, width - 3))
+	else
+		centerText("Search or add a track", info_y, C_DIM)
+	end
+
 	-- Controls
-	if ctrl_y <= height - 2 then
+	if ctrl_y <= height - 1 then
+		term.setCursorPos(1, ctrl_y)
+		term.setBackgroundColor(C_BG)
+		term.clearLine()
 		local cx = 2
 		local is_playing = playing and now_playing
 		cx = cx + drawButton(cx, ctrl_y, is_playing and "\x04" or "\x10", is_playing, not now_playing and #queue == 0)
@@ -480,28 +679,93 @@ local function drawPlayer()
 		cx = cx + drawButton(cx, ctrl_y, loop_labels[looping], looping > 0)
 		cx = cx + 1
 		cx = cx + drawButton(cx, ctrl_y, "Shf", shuffled)
-		term.setBackgroundColor(C_BG)
-	end
-
-	-- Volume slider
-	if vol_y <= height - 2 then
-		term.setCursorPos(2, vol_y)
-		term.setTextColor(C_DIM)
-		term.setBackgroundColor(C_BG)
-		term.write("Vol ")
-		local slider_start = 6
-		local slider_width = math.max(8, width - slider_start - 6)
-		local filled = math.floor((volume / 3) * slider_width)
-		term.setBackgroundColor(C_ACCENT)
-		term.write(string.rep(" ", filled))
-		term.setBackgroundColor(C_TAB_BG)
-		term.write(string.rep(" ", slider_width - filled))
-		term.setBackgroundColor(C_BG)
-		term.setTextColor(C_TITLE)
-		term.write(" " .. math.floor((volume / 3) * 100) .. "%")
+		if width >= 38 then
+			local vol_text = " Vol " .. math.floor((volume / MAX_VOLUME) * 100) .. "%"
+			term.setCursorPos(math.max(cx + 1, width - #vol_text), ctrl_y)
+			term.setTextColor(C_DIM)
+			term.setBackgroundColor(C_BG)
+			term.write(vol_text)
+		end
 	end
 
 	drawHintBar("Space:play  N:skip  +/-:vol  S:search")
+end
+
+local function getChangelogListMetrics()
+	local settings_y = 4
+	settings_y = settings_y + 1 -- Loop
+	settings_y = settings_y + 1 -- Shuffle
+	settings_y = settings_y + 2 -- Volume + spacer
+	settings_y = settings_y + 1 -- Speakers header
+	settings_y = settings_y + 1 -- Local row
+	settings_y = settings_y + #speakers
+	settings_y = settings_y + 1 + #network_speakers
+	if not has_modem then settings_y = settings_y + 1 end
+	settings_y = settings_y + 1 -- Spacer before changelog
+
+	local header_y = settings_y
+	local list_y = header_y + 1
+	local visible = math.max(1, height - list_y - 1)
+	return list_y, visible
+end
+
+local function drawChangelogDetail()
+	term.setBackgroundColor(C_BG)
+	term.clear()
+
+	local cl = clicked_changelog
+	if not cl then
+		in_changelog_item = false
+		centerText("No changelog selected", math.floor(height / 2), C_DIM)
+		return
+	end
+
+	term.setCursorPos(2, 1)
+	term.setTextColor(C_ACCENT)
+	term.write("\x10 Changelog")
+
+	term.setCursorPos(2, 3)
+	term.setTextColor(C_TITLE)
+	term.write(ellipsize(cl.title or "", width - 3))
+
+	term.setCursorPos(2, 4)
+	term.setTextColor(C_DIM)
+	term.write(cl.date or "")
+	if now_playing then
+		local play_time = "Play " .. formatTime(current_played_seconds)
+		term.setCursorPos(math.max(2, width - #play_time), 4)
+		term.setTextColor(C_ACCENT)
+		term.write(play_time)
+	end
+
+	local body_lines = splitWrappedLines(cl.body or "", width - 4)
+	local body_y = 6
+	local body_height = math.max(1, height - body_y - 1)
+	local max_scroll = math.max(0, #body_lines - body_height)
+	if changelog_body_scroll > max_scroll then changelog_body_scroll = max_scroll end
+
+	for i = 1, body_height do
+		local idx = changelog_body_scroll + i
+		if idx > #body_lines then break end
+		term.setCursorPos(2, body_y + i - 1)
+		term.setTextColor(C_ARTIST)
+		term.write(ellipsize(body_lines[idx], width - 3))
+	end
+
+	if changelog_body_scroll > 0 then
+		term.setCursorPos(width, body_y)
+		term.setTextColor(C_ACCENT)
+		term.write("\x1e")
+	end
+	if changelog_body_scroll < max_scroll then
+		term.setCursorPos(width, height - 2)
+		term.setTextColor(C_ACCENT)
+		term.write("\x1f")
+	end
+
+	drawButton(2, height - 1, "Back", false)
+	term.setBackgroundColor(C_BG)
+	drawHintBar("Scroll:read  Q:back")
 end
 
 -- ============================================================
@@ -637,10 +901,48 @@ local function drawSearch()
 				centerText(ellipsize(search_error_message, width - 4), math.floor(height / 2) + 1, C_DIM)
 			end
 		elseif not last_search then
-			centerText("Search YouTube, SoundCloud, Spotify", math.floor(height / 2), C_DIM)
-			centerText("or paste a supported audio URL", math.floor(height / 2) + 1, C_DIM)
+			if not local_tracks then loadLocalTracks() end
+			term.setCursorPos(2, 5)
+			term.setTextColor(C_ACCENT)
+			term.setBackgroundColor(C_BG)
+			term.write("\x0f Local music/")
+				-- Show free storage and optional status line
+				term.setCursorPos(2, 6)
+				term.setTextColor(C_DIM)
+				term.write(ellipsize(getFreeSpaceString(), width - 3))
+				if local_status then
+					term.setCursorPos(2, 7)
+					term.setTextColor(C_DIM)
+					term.write(ellipsize(local_status, width - 3))
+				end
+				if #local_tracks == 0 then
+				centerText("Search YouTube, SoundCloud, Spotify", math.floor(height / 2), C_DIM)
+				centerText("or save DFPWM tracks into music/", math.floor(height / 2) + 1, C_DIM)
+			else
+					local list_start = local_status and 8 or 7
+				local list_end = height - 2
+				local visible = list_end - list_start + 1
+				for i = 1, visible do
+					local idx = i + local_scroll
+					if idx > #local_tracks then break end
+					local item = local_tracks[idx]
+					local y = list_start + i - 1
+					local row_bg = (i % 2 == 0) and C_BG or colors.gray
+					term.setCursorPos(1, y)
+					term.setBackgroundColor(row_bg)
+					term.write(string.rep(" ", width))
+					term.setCursorPos(2, y)
+					term.setTextColor(C_ACCENT)
+					term.setBackgroundColor(row_bg)
+					term.write(platformIcon(item.platform) .. " ")
+					term.setTextColor(C_TITLE)
+					term.write(ellipsize(item.name or "Unknown", math.floor(width * 0.55)))
+					term.setTextColor(C_ARTIST)
+					term.write(" " .. ellipsize(item.artist or "", width - 5 - #(item.name or "")))
+				end
+			end
 		end
-		drawHintBar(search_focused and "Typing on computer keyboard  Enter:search" or "S:search  Click bar to type")
+		drawHintBar(search_focused and "Typing on computer keyboard  Enter:search" or "S:search  R:refresh local")
 		return
 	end
 
@@ -674,7 +976,11 @@ local function drawSearch()
 		term.setBackgroundColor(C_BG)
 		drawButton(math.floor(width / 2) - 6, menu_y + 4, "Add to queue", false)
 		term.setBackgroundColor(C_BG)
-		drawButton(math.floor(width / 2) - 6, menu_y + 7, "Cancel", false)
+		if not r.local_path and r.type ~= "playlist" then
+			drawButton(math.floor(width / 2) - 6, menu_y + 6, "Save local", false)
+			term.setBackgroundColor(C_BG)
+		end
+		drawButton(math.floor(width / 2) - 6, menu_y + 8, "Cancel", false)
 		term.setBackgroundColor(C_BG)
 
 		drawHintBar("Q:back")
@@ -807,7 +1113,7 @@ local function drawSettings()
 	local slider_start = 10
 	local slider_width = math.min(20, width - slider_start - 8)
 	if slider_width < 4 then slider_width = 4 end
-	local filled = math.floor((volume / 3) * slider_width)
+	local filled = math.floor((volume / MAX_VOLUME) * slider_width)
 	term.setCursorPos(slider_start, y)
 	term.setBackgroundColor(C_ACCENT)
 	term.write(string.rep(" ", filled))
@@ -815,7 +1121,7 @@ local function drawSettings()
 	term.write(string.rep(" ", slider_width - filled))
 	term.setBackgroundColor(C_BG)
 	term.setTextColor(C_TITLE)
-	term.write(" " .. math.floor((volume / 3) * 100) .. "%")
+	term.write(" " .. math.floor((volume / MAX_VOLUME) * 100) .. "%")
 	y = y + 2
 
 	-- Speakers section
@@ -869,46 +1175,10 @@ local function drawSettings()
 		term.write("\x10 Changelog")
 		y = y + 1
 
-		if in_changelog_item and clicked_changelog then
-			local cl = clicked_changelog
-			term.setCursorPos(4, y)
-			term.setTextColor(C_TITLE)
-			term.write(ellipsize(cl.title or "", width - 5))
-			y = y + 1
-			term.setCursorPos(4, y)
-			term.setTextColor(C_DIM)
-			term.write(cl.date or "")
-			y = y + 1
-
-			local body = cl.body or ""
-			local lines_available = height - y - 2
-			local line_start_pos = 1
-			for _ = 1, lines_available do
-				if y > height - 2 then break end
-				local nl = string.find(body, "\n", line_start_pos)
-				local line_text
-				if nl then
-					line_text = string.sub(body, line_start_pos, nl - 1)
-					line_start_pos = nl + 1
-				else
-					line_text = string.sub(body, line_start_pos)
-					if #line_text == 0 then break end
-					line_start_pos = #body + 1
-				end
-				term.setCursorPos(4, y)
-				term.setTextColor(C_ARTIST)
-				term.write(ellipsize(line_text, width - 5))
-				y = y + 1
-			end
-
-			drawButton(2, height - 1, "Back", false)
-			term.setBackgroundColor(C_BG)
-			drawHintBar("Q:back")
-			return
-		end
-
 		if changelog_results and #changelog_results > 0 then
 			local visible = math.max(1, height - y - 1)
+			local max_scroll = math.max(0, #changelog_results - visible)
+			if changelog_scroll > max_scroll then changelog_scroll = max_scroll end
 			for i = 1, visible do
 				local idx = i + changelog_scroll
 				if idx > #changelog_results then break end
@@ -940,6 +1210,11 @@ end
 -- ============================================================
 
 local function redrawScreen()
+	if in_changelog_item then
+		drawChangelogDetail()
+		return
+	end
+
 	term.setBackgroundColor(C_BG)
 	term.clear()
 	drawTabs()
@@ -960,9 +1235,7 @@ end
 -- ============================================================
 
 local function handlePlayerClick(x, y)
-	local viz_height = math.max(3, height - 10)
-	local ctrl_y = 6 + viz_height + 1
-	local vol_y = ctrl_y + 1
+	local _, _, _, ctrl_y = getPlayerLayout()
 
 	if y == ctrl_y then
 		local cx = 2
@@ -973,9 +1246,11 @@ local function handlePlayerClick(x, y)
 		local btn_w = #btn_label + 2
 		if x >= cx and x < cx + btn_w then
 			if playing then
+				saveResumePosition()
 				playing = false
 				for _, speaker in ipairs(speakers) do speaker.stop() end
 				os.queueEvent("playback_stopped")
+				closePlayerHandle()
 				if has_modem and #network_speakers > 0 then
 					rednet.broadcast({ type = "stop" }, STREAM_PROTOCOL)
 				end
@@ -1006,9 +1281,11 @@ local function handlePlayerClick(x, y)
 		if x >= cx and x < cx + 4 then
 			if now_playing ~= nil or #queue > 0 then
 				is_error = false
+				resetResumePosition(now_playing)
 				if playing then
 					for _, speaker in ipairs(speakers) do speaker.stop() end
 					os.queueEvent("playback_stopped")
+					closePlayerHandle()
 					if has_modem and #network_speakers > 0 then
 						rednet.broadcast({ type = "stop" }, STREAM_PROTOCOL)
 					end
@@ -1049,16 +1326,6 @@ local function handlePlayerClick(x, y)
 			if shuffled then shuffleQueue() end
 			redrawScreen()
 			return
-		end
-	end
-
-	-- Volume slider
-	if y == vol_y then
-		local slider_start = 6
-		local slider_width = math.max(8, width - slider_start - 6)
-		if x >= slider_start and x < slider_start + slider_width then
-			volume = math.max(0, math.min(3, ((x - slider_start) / slider_width) * 3))
-			redrawScreen()
 		end
 	end
 end
@@ -1111,6 +1378,20 @@ local function handleSearchClick(x, y)
 		return
 	end
 
+	if not search_results and not last_search and local_tracks and #local_tracks > 0 and not in_search_result then
+		local list_start = local_status and 8 or 7
+		local list_end = height - 2
+		if y >= list_start and y <= list_end then
+			local idx = (y - list_start) + local_scroll + 1
+			if idx >= 1 and idx <= #local_tracks then
+				clicked_result = local_tracks[idx]
+				in_search_result = true
+				redrawScreen()
+			end
+		end
+		return
+	end
+
 	if search_results and #search_results > 0 and y >= 5 and not in_search_result then
 		local list_start = 5
 		local idx
@@ -1134,8 +1415,10 @@ local function handleSearchResultMenuClick(x, y)
 		-- Play now
 		local r = clicked_result
 		if r then
+			resetResumePosition(now_playing)
 			for _, speaker in ipairs(speakers) do speaker.stop() end
 			os.queueEvent("playback_stopped")
+			closePlayerHandle()
 			if has_modem and #network_speakers > 0 then
 				rednet.broadcast({ type = "stop" }, STREAM_PROTOCOL)
 			end
@@ -1151,7 +1434,7 @@ local function handleSearchResultMenuClick(x, y)
 				end
 				queue_scroll = 0
 			else
-				now_playing = { id = r.id, name = r.name, artist = r.artist, platform = r.platform, download_url = r.download_url }
+				now_playing = makeLocalTrackFromResult(r)
 			end
 			playing_id = nil
 			playing = true
@@ -1178,7 +1461,7 @@ local function handleSearchResultMenuClick(x, y)
 					table.insert(queue, 1, item)
 				end
 			else
-				table.insert(queue, 1, { id = r.id, name = r.name, artist = r.artist, platform = r.platform, download_url = r.download_url })
+				table.insert(queue, 1, makeLocalTrackFromResult(r))
 			end
 			if shuffled then shuffleQueue() end
 			in_search_result = false
@@ -1198,9 +1481,20 @@ local function handleSearchResultMenuClick(x, y)
 					table.insert(queue, item)
 				end
 			else
-				table.insert(queue, { id = r.id, name = r.name, artist = r.artist, platform = r.platform, download_url = r.download_url })
+				table.insert(queue, makeLocalTrackFromResult(r))
 			end
 			if shuffled then shuffleQueue() end
+			in_search_result = false
+			clicked_result = nil
+			redrawScreen()
+		end
+		return
+	end
+
+	if y == menu_y + 6 then
+		local r = clicked_result
+		if r and not r.local_path and r.type ~= "playlist" then
+			startLocalDownload(r)
 			in_search_result = false
 			clicked_result = nil
 			redrawScreen()
@@ -1240,7 +1534,7 @@ local function handleSettingsClick(x, y)
 		local slider_w = math.min(20, width - slider_s - 8)
 		if slider_w < 4 then slider_w = 4 end
 		if x >= slider_s and x < slider_s + slider_w then
-			volume = math.max(0, math.min(3, ((x - slider_s) / slider_w) * 3))
+			volume = math.max(0, math.min(MAX_VOLUME, ((x - slider_s) / slider_w) * MAX_VOLUME))
 			redrawScreen()
 		end
 		return
@@ -1288,6 +1582,7 @@ local function handleSettingsClick(x, y)
 		if y == height - 1 then
 			in_changelog_item = false
 			clicked_changelog = nil
+			changelog_body_scroll = 0
 			redrawScreen()
 		end
 		return
@@ -1298,6 +1593,7 @@ local function handleSettingsClick(x, y)
 		if idx >= 1 and idx <= #changelog_results then
 			clicked_changelog = changelog_results[idx]
 			in_changelog_item = true
+			changelog_body_scroll = 0
 			redrawScreen()
 		end
 	end
@@ -1412,7 +1708,14 @@ local function uiLoop()
 				end,
 				function()
 					local event, dir, x, y = os.pullEvent("mouse_scroll")
-					if tab == 2 then
+					if in_changelog_item then
+						local max_scroll = getChangelogBodyMaxScroll()
+						if dir == 1 and changelog_body_scroll < max_scroll then
+							changelog_body_scroll = changelog_body_scroll + 1
+						elseif dir == -1 and changelog_body_scroll > 0 then
+							changelog_body_scroll = changelog_body_scroll - 1
+						end
+					elseif tab == 2 then
 						local list_end = height - 2
 						local list_start = 5
 						local visible
@@ -1444,7 +1747,9 @@ local function uiLoop()
 						end
 					elseif tab == 4 then
 						if changelog_results then
-							if dir == 1 then
+							local _, visible = getChangelogListMetrics()
+							local max_scroll = math.max(0, #changelog_results - visible)
+							if dir == 1 and changelog_scroll < max_scroll then
 								changelog_scroll = changelog_scroll + 1
 							elseif dir == -1 and changelog_scroll > 0 then
 								changelog_scroll = changelog_scroll - 1
@@ -1456,24 +1761,13 @@ local function uiLoop()
 				function()
 					-- Volume drag
 					local event, button, x, y = os.pullEvent("mouse_drag")
-					if tab == 1 then
-						local viz_height = math.max(3, height - 10)
-						local vol_y = 6 + viz_height + 2
-						if y == vol_y then
-							local slider_start = 6
-							local slider_width = math.max(8, width - slider_start - 6)
-							if x >= slider_start and x < slider_start + slider_width then
-								volume = math.max(0, math.min(3, ((x - slider_start) / slider_width) * 3))
-								redrawScreen()
-							end
-						end
-					elseif tab == 4 then
+						if tab == 4 and not in_changelog_item then
 						if y == 6 then
 							local slider_s = 10
 							local slider_w = math.min(20, width - slider_s - 8)
 							if slider_w < 4 then slider_w = 4 end
 							if x >= slider_s and x < slider_s + slider_w then
-								volume = math.max(0, math.min(3, ((x - slider_s) / slider_w) * 3))
+								volume = math.max(0, math.min(MAX_VOLUME, ((x - slider_s) / slider_w) * MAX_VOLUME))
 								redrawScreen()
 							end
 						end
@@ -1481,6 +1775,24 @@ local function uiLoop()
 				end,
 				function()
 					local event, key = os.pullEvent("key")
+
+					if in_changelog_item then
+						if key == keys.q or key == keys.backspace or key == keys.escape then
+							in_changelog_item = false
+							clicked_changelog = nil
+							changelog_body_scroll = 0
+						elseif key == keys.down then
+							changelog_body_scroll = math.min(getChangelogBodyMaxScroll(), changelog_body_scroll + 1)
+						elseif key == keys.up then
+							changelog_body_scroll = math.max(0, changelog_body_scroll - 1)
+						elseif key == keys.pageDown then
+							changelog_body_scroll = math.min(getChangelogBodyMaxScroll(), changelog_body_scroll + math.max(1, height - 7))
+						elseif key == keys.pageUp then
+							changelog_body_scroll = math.max(0, changelog_body_scroll - math.max(1, height - 7))
+						end
+						redrawScreen()
+						return
+					end
 
 					-- Tab navigation
 					if key == keys.left then
@@ -1504,11 +1816,11 @@ local function uiLoop()
 
 					-- Volume
 					if key == keys.equals or key == keys.numPadAdd then
-						volume = math.min(3, volume + 0.15)
+						volume = math.min(MAX_VOLUME, volume + 0.1)
 						redrawScreen()
 					end
 					if key == keys.minus or key == keys.numPadSubtract then
-						volume = math.max(0, volume - 0.15)
+						volume = math.max(0, volume - 0.1)
 						redrawScreen()
 					end
 
@@ -1528,9 +1840,11 @@ local function uiLoop()
 					-- Space to play/pause
 					if key == keys.space and (tab == 1 or tab == 2) then
 						if playing then
+							saveResumePosition()
 							playing = false
 							for _, speaker in ipairs(speakers) do speaker.stop() end
 							os.queueEvent("playback_stopped")
+							closePlayerHandle()
 							broadcastStop()
 							playing_id = nil
 							is_loading = false
@@ -1557,9 +1871,11 @@ local function uiLoop()
 					if key == keys.n and (tab == 1 or tab == 2) then
 						if now_playing ~= nil or #queue > 0 then
 							is_error = false
+							resetResumePosition(now_playing)
 							if playing then
 								for _, speaker in ipairs(speakers) do speaker.stop() end
 								os.queueEvent("playback_stopped")
+								closePlayerHandle()
 								broadcastStop()
 							end
 							if #queue > 0 then
@@ -1632,28 +1948,61 @@ local function audioLoop()
 			local thisnowplayingid = now_playing.id
 			if playing_id ~= thisnowplayingid then
 				playing_id = thisnowplayingid
-				-- Build download URL based on platform
-				local dl_url
-				if now_playing.download_url then
-					dl_url = api_base_url .. "?v=" .. version .. "&url=" .. textutils.urlEncode(now_playing.download_url)
+				local track_key = getTrackKey(now_playing)
+				current_played_seconds = track_key and resume_positions[track_key] or 0
+				if now_playing.local_path then
+					local handle = fs.open(now_playing.local_path, "rb")
+					if not handle then
+						is_error = true
+						playing = false
+						playing_id = nil
+						os.queueEvent("redraw_screen")
+						break
+					end
+					player_handle = handle
+					if current_played_seconds > 0 then
+						local skip_bytes = math.floor(current_played_seconds * DFPWM_BYTES_PER_SECOND)
+						if player_handle.seek then
+							player_handle.seek("set", skip_bytes)
+						else
+							while skip_bytes > 0 do
+								local skipped = player_handle.read(math.min(skip_bytes, 16 * 1024))
+								if not skipped then break end
+								skip_bytes = skip_bytes - #skipped
+							end
+						end
+					end
+					start = player_handle.read(4)
+					size = 16 * 1024 - 4
+					playing_status = 1
+					needs_next_chunk = 1
+					is_loading = false
+					clearVisualizer()
+					decoder = require("cc.audio.dfpwm").make_decoder()
+					os.queueEvent("redraw_screen")
+					os.queueEvent("audio_update")
 				else
-					dl_url = api_base_url .. "?v=" .. version .. "&id=" .. textutils.urlEncode(playing_id)
+					local dl_url = makeDownloadUrl(now_playing)
+					if current_played_seconds > 0 then
+						dl_url = dl_url .. "&start=" .. math.floor(current_played_seconds)
+					end
+					last_download_url = dl_url
+					playing_status = 0
+					needs_next_chunk = 1
+
+					http.request({ url = last_download_url, binary = true, timeout = DOWNLOAD_REQUEST_TIMEOUT })
+					is_loading = true
+					clearVisualizer()
+					decoder = require("cc.audio.dfpwm").make_decoder()
+
+					os.queueEvent("redraw_screen")
+					os.queueEvent("audio_update")
 				end
-				last_download_url = dl_url
-				playing_status = 0
-				needs_next_chunk = 1
-
-				http.request({ url = last_download_url, binary = true, timeout = DOWNLOAD_REQUEST_TIMEOUT })
-				is_loading = true
-				clearVisualizer()
-				decoder = require("cc.audio.dfpwm").make_decoder()
-
-				os.queueEvent("redraw_screen")
-				os.queueEvent("audio_update")
 			elseif playing_status == 1 and needs_next_chunk == 1 then
 				while true do
 					local chunk = player_handle.read(size)
 					if not chunk then
+						resetResumePosition(now_playing)
 						if looping == 2 or (looping == 1 and #queue == 0) then
 							playing_id = nil
 						elseif looping == 1 and #queue > 0 then
@@ -1727,9 +2076,13 @@ local function audioLoop()
 						end
 
 						if not playing or playing_id ~= thisnowplayingid then
+							saveResumePosition()
 							needs_next_chunk = 0
 							break
 						end
+
+						current_played_seconds = current_played_seconds + (#chunk / DFPWM_BYTES_PER_SECOND)
+						saveResumePosition()
 					end
 				end
 			else
@@ -1768,6 +2121,36 @@ local function httpLoop()
 					os.queueEvent("redraw_screen")
 					os.queueEvent("audio_update")
 				end
+				if url == local_download_url then
+					-- Save the binary response into the local music dir as .dfpwm
+					local ok, data = pcall(function() return handle.readAll() end)
+					if ok and data and #data > 0 and local_download_path then
+						local wrote = false
+						local success, err = pcall(function()
+							local out = fs.open(local_download_path, "wb")
+							out.write(data)
+							out.close()
+							wrote = true
+						end)
+						if wrote then
+							local_status = "Saved: " .. fs.getName(local_download_path) .. " (" .. getFreeSpaceString() .. ")"
+							local_download_url = nil
+							local_download_path = nil
+							loadLocalTracks()
+							os.queueEvent("redraw_screen")
+						else
+							local_status = "Save failed"
+							local_download_url = nil
+							local_download_path = nil
+							os.queueEvent("redraw_screen")
+						end
+					else
+						local_status = "Save failed"
+						local_download_url = nil
+						local_download_path = nil
+						os.queueEvent("redraw_screen")
+					end
+				end
 			end,
 			function()
 				local event, url, reason = os.pullEvent("http_failure")
@@ -1784,6 +2167,12 @@ local function httpLoop()
 				if url == last_download_url then
 					is_error = true
 					is_loading = false
+					os.queueEvent("redraw_screen")
+				end
+				if url == local_download_url then
+					local_status = "Save failed"
+					local_download_url = nil
+					local_download_path = nil
 					os.queueEvent("redraw_screen")
 				end
 			end
