@@ -234,8 +234,11 @@ const YTDLP_BIN = findBin("yt-dlp");
 const FFMPEG_BIN = findBin("ffmpeg");
 
 function getYtBypassArgs(withCookies) {
+  if (process.env.YTDLP_EXTRACTOR_ARGS) {
+    return ["--extractor-args", process.env.YTDLP_EXTRACTOR_ARGS];
+  }
   if (withCookies) {
-    return ["--extractor-args", "youtube:player_client=web"];
+    return ["--extractor-args", "youtube:player_client=ios,web"];
   }
   return [
     "--extractor-args", "youtube:player_client=ios",
@@ -295,16 +298,28 @@ async function handleAudioDownload(sourceUrl, res, clientIp) {
     // Pipe: yt-dlp stdout -> ffmpeg stdin -> response
     ytdlp.stdout.pipe(ffmpeg.stdin);
 
-    res.setHeader("Content-Type", "application/octet-stream");
-    res.setHeader("Cache-Control", "no-store");
+    let responseStarted = false;
+    let clientClosed = false;
+
+    function startResponse() {
+      if (responseStarted || res.headersSent) return;
+      responseStarted = true;
+      res.status(200);
+      res.setHeader("Content-Type", "application/octet-stream");
+      res.setHeader("Cache-Control", "no-store");
+    }
 
     ffmpeg.stdout.on("data", (chunk) => {
+      startResponse();
       streamMeta.bytesOut += chunk.length;
+      res.write(chunk);
     });
-    ffmpeg.stdout.pipe(res);
 
     res.on("close", () => {
+      clientClosed = true;
       removeStream(streamId);
+      if (!ytdlp.killed) ytdlp.kill("SIGTERM");
+      if (!ffmpeg.killed) ffmpeg.kill("SIGTERM");
     });
 
     ytdlp.on("error", (err) => {
@@ -329,11 +344,19 @@ async function handleAudioDownload(sourceUrl, res, clientIp) {
     });
 
     ffmpeg.on("close", (code) => {
+      if (clientClosed) {
+        resolve();
+        return;
+      }
       if (code !== 0) {
         console.error(`[dl] ffmpeg exited with code ${code}: ${ffmpegStderr.slice(0, 500)}`);
         if (!res.headersSent) res.status(502).send("Error 502");
+      } else if (streamMeta.bytesOut === 0) {
+        console.error("[dl] ffmpeg exited ok but produced no audio bytes");
+        if (!res.headersSent) res.status(502).send("Error 502");
       } else {
         console.log("[dl] ffmpeg transcode finished ok");
+        if (!res.writableEnded) res.end();
       }
       resolve();
     });
