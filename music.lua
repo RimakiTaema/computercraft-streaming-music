@@ -7,128 +7,128 @@ local api_base_url = "SetMe"
 local version = "4.1.1"
 local DOWNLOAD_REQUEST_TIMEOUT = 60
 
-local width, height = term.getSize()
-local tab = 1 -- 1=Player 2=Queue 3=Search 4=Settings
+width, height = term.getSize()
+tab = 1 -- 1=Player 2=Queue 3=Search 4=Settings
 
 -- Search state
-local last_search = nil
-local last_search_url = nil
-local search_results = nil
-local search_error = false
-local search_error_message = nil
-local in_search_result = false
-local clicked_result = nil
-local search_scroll = 0
-local search_ignore_next_s_char = false
-local local_tracks = nil
-local local_scroll = 0
-local local_status = nil
-local local_download_url = nil
-local local_download_path = nil
-local LOCAL_MUSIC_DIR = "music"
+last_search = nil
+last_search_url = nil
+search_results = nil
+search_error = false
+search_error_message = nil
+in_search_result = false
+clicked_result = nil
+search_scroll = 0
+search_ignore_next_s_char = false
+local_tracks = nil
+local_scroll = 0
+local_status = nil
+local_download_url = nil
+local_download_path = nil
+LOCAL_MUSIC_DIR = "music"
 
 -- Changelog state
-local changelog_results = nil
-local changelog_error = false
-local last_changelog_url = nil
-local in_changelog_item = false
-local clicked_changelog = nil
-local changelog_scroll = 0
-local changelog_body_scroll = 0
+changelog_results = nil
+changelog_error = false
+last_changelog_url = nil
+in_changelog_item = false
+clicked_changelog = nil
+changelog_scroll = 0
+changelog_body_scroll = 0
 
 -- Queue state
-local queue_scroll = 0
+queue_scroll = 0
 
 -- Settings scroll
-local settings_scroll = 0
+settings_scroll = 0
 
 -- Playback
-local playing = false
-local queue = {}
-local now_playing = nil
-local looping = 0 -- 0=off, 1=queue, 2=single
-local volume = 1.0
-local MAX_VOLUME = 2.0
-local shuffled = false
+playing = false
+queue = {}
+now_playing = nil
+looping = 0 -- 0=off, 1=queue, 2=single
+volume = 1.0
+MAX_VOLUME = 2.0
+shuffled = false
 
-local playing_id = nil
-local last_download_url = nil
-local playing_status = 0
-local is_loading = false
-local is_error = false
-local waiting_for_input = false
-local resume_positions = {}
-local current_played_seconds = 0
-local DFPWM_BYTES_PER_SECOND = 6000
+playing_id = nil
+last_download_url = nil
+playing_status = 0
+is_loading = false
+is_error = false
+waiting_for_input = false
+resume_positions = {}
+current_played_seconds = 0
+DFPWM_BYTES_PER_SECOND = 6000
 
 -- Audio
-local player_handle = nil
-local start = nil
-local size = nil
-local decoder = require "cc.audio.dfpwm".make_decoder()
-local needs_next_chunk = 0
+player_handle = nil
+start = nil
+size = nil
+decoder = require "cc.audio.dfpwm".make_decoder()
+needs_next_chunk = 0
 
 -- Visualizer
-local viz_bars = {}
-local viz_target_bars = {}
-local viz_bar_count = 0
-local VIZ_SMOOTH_DECAY = 0.85
-local VIZ_RISE_SPEED = 0.5
-local VIZ_TIMER_INTERVAL = 0.05
-local viz_timer = nil
-local VIZ_CHARS = { "\x8f", "\x8f", "\x83", "\x83", "\x8c", "\x8c", "\x8c", "\x7f" }
+viz_bars = {}
+viz_target_bars = {}
+viz_bar_count = 0
+VIZ_SMOOTH_DECAY = 0.85
+VIZ_RISE_SPEED = 0.5
+VIZ_TIMER_INTERVAL = 0.05
+viz_timer = nil
+VIZ_CHARS = { "\x8f", "\x8f", "\x83", "\x83", "\x8c", "\x8c", "\x8c", "\x7f" }
 
 -- Animation
-local anim_frame = 0
-local anim_timer = os.startTimer(0.5)
+anim_frame = 0
+anim_timer = os.startTimer(0.5)
 
 -- Layout tiers
-local LAYOUT_COMPACT = 1
-local LAYOUT_NORMAL = 2
-local LAYOUT_WIDE = 3
-local layout_mode = LAYOUT_NORMAL
+LAYOUT_COMPACT = 1
+LAYOUT_NORMAL = 2
+LAYOUT_WIDE = 3
+layout_mode = LAYOUT_NORMAL
 
 -- Colors
-local C_BG = colors.black
-local C_TAB_BG = colors.gray
-local C_TAB_SEL = colors.cyan
-local C_TAB_FG = colors.lightGray
-local C_TITLE = colors.white
-local C_ARTIST = colors.lightGray
-local C_ACCENT = colors.cyan
-local C_BTN_BG = colors.gray
-local C_BTN_ACT = colors.cyan
-local C_BTN_DIS = colors.lightGray
-local C_VIZ = colors.cyan
-local C_VIZ2 = colors.purple
-local C_ERROR = colors.red
-local C_LOADING = colors.yellow
-local C_SEARCH_BG = colors.gray
-local C_SEARCH_FG = colors.white
-local C_SEARCH_PH = colors.lightGray
-local C_DIM = colors.gray
+C_BG = colors.black
+C_TAB_BG = colors.gray
+C_TAB_SEL = colors.cyan
+C_TAB_FG = colors.lightGray
+C_TITLE = colors.white
+C_ARTIST = colors.lightGray
+C_ACCENT = colors.cyan
+C_BTN_BG = colors.gray
+C_BTN_ACT = colors.cyan
+C_BTN_DIS = colors.lightGray
+C_VIZ = colors.cyan
+C_VIZ2 = colors.purple
+C_ERROR = colors.red
+C_LOADING = colors.yellow
+C_SEARCH_BG = colors.gray
+C_SEARCH_FG = colors.white
+C_SEARCH_PH = colors.lightGray
+C_DIM = colors.gray
 
 -- Speakers (local)
-local speakers = { peripheral.find("speaker") }
+speakers = { peripheral.find("speaker") }
 
 -- Modem / network speakers
-local modem = peripheral.find("modem")
-local has_modem = modem ~= nil
-local network_speakers = {} -- { id=number, label=string }
-local STREAM_PROTOCOL = "music_stream"
+modem = peripheral.find("modem")
+has_modem = modem ~= nil
+network_speakers = {} -- { id=number, label=string }
+STREAM_PROTOCOL = "music_stream"
 
 if #speakers == 0 and not has_modem then
-	error("No speakers or modem attached.", 0)
+    error("No speakers or modem attached.", 0)
 end
 
 if has_modem then
-	rednet.open(peripheral.getName(modem))
+    rednet.open(peripheral.getName(modem))
 end
 
 -- Monitor auto-detect: use monitor as primary display if attached
-local monitor = peripheral.find("monitor")
-local original_term = term.current()
-local has_monitor = false
+monitor = peripheral.find("monitor")
+original_term = term.current()
+has_monitor = false
 if monitor then
 	local best_scale = nil
 	local scales = { 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5 }
