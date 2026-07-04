@@ -166,8 +166,9 @@ export async function ipodHandler(req, res) {
         }
         source = `https://www.youtube.com/watch?v=${encodeURIComponent(id)}`;
       }
-      console.log(`[handler] audio download source=${source.slice(0, 80)}`);
-      return await handleAudioDownload(source, res, req.ip || req.socket?.remoteAddress);
+      const startSeconds = parseStartSeconds(req.query.start);
+      console.log(`[handler] audio download source=${source.slice(0, 80)} start=${startSeconds}s`);
+      return await handleAudioDownload(source, res, req.ip || req.socket?.remoteAddress, startSeconds);
     }
 
     if (changelogs) {
@@ -266,8 +267,15 @@ function spawnBin(bin, args, opts = {}) {
   return spawn(bin, args, { ...opts, env: { ...SPAWN_ENV, ...opts.env }, ...(IS_WIN ? { shell: true } : {}) });
 }
 
-async function handleAudioDownload(sourceUrl, res, clientIp) {
-  console.log(`[dl] starting yt-dlp + ffmpeg pipeline for ${sourceUrl.slice(0, 80)}`);
+function parseStartSeconds(value) {
+  const raw = Array.isArray(value) ? value[0] : value;
+  const seconds = Number.parseInt(String(raw || "0"), 10);
+  if (!Number.isFinite(seconds) || seconds < 0) return 0;
+  return Math.min(seconds, 24 * 60 * 60);
+}
+
+async function handleAudioDownload(sourceUrl, res, clientIp, startSeconds = 0) {
+  console.log(`[dl] starting yt-dlp + ffmpeg pipeline for ${sourceUrl.slice(0, 80)} from ${startSeconds}s`);
   const streamId = `stream_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const streamMeta = registerStream(streamId, sourceUrl, clientIp);
 
@@ -293,14 +301,17 @@ async function handleAudioDownload(sourceUrl, res, clientIp) {
     // ffmpeg: convert to DFPWM for ComputerCraft
     // analyzeduration/probesize bumped up to handle muxed video+audio streams
     // when YouTube doesn't serve a separate audio-only format
+    const ffmpegSeekArgs = startSeconds > 0 ? ["-ss", String(startSeconds)] : [];
     const ffmpeg = spawnBin(FFMPEG_BIN, [
-      "-i", "pipe:0",
       "-analyzeduration", "10M",
       "-probesize", "10M",
+      "-i", "pipe:0",
+      ...ffmpegSeekArgs,
       "-loglevel", "warning",
       "-vn",
       "-ar", "48000",
       "-ac", "1",
+      "-af", "loudnorm=I=-16:TP=-1.5:LRA=11,alimiter=limit=0.92",
       "-c:a", "dfpwm",
       "-f", "dfpwm",
       "pipe:1",
