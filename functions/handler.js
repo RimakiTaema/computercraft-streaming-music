@@ -295,11 +295,31 @@ async function handleAudioDownload(sourceUrl, res, clientIp) {
     ytdlp.stderr.on("data", (chunk) => { ytdlpStderr += chunk.toString(); });
     ffmpeg.stderr.on("data", (chunk) => { ffmpegStderr += chunk.toString(); });
 
-    // Pipe: yt-dlp stdout -> ffmpeg stdin -> response
-    ytdlp.stdout.pipe(ffmpeg.stdin);
-
     let responseStarted = false;
     let clientClosed = false;
+    let responseFinished = false;
+    let settled = false;
+
+    function finishPromise() {
+      if (settled) return;
+      settled = true;
+      resolve();
+    }
+
+    function killChildren() {
+      if (!ytdlp.killed) ytdlp.kill("SIGTERM");
+      if (!ffmpeg.killed) ffmpeg.kill("SIGTERM");
+    }
+
+    function safeEndFfmpegStdin() {
+      if (!ffmpeg.stdin.destroyed && !ffmpeg.stdin.writableEnded) {
+        try {
+          ffmpeg.stdin.end();
+        } catch (err) {
+          console.warn(`[dl] ignored ffmpeg stdin end error: ${err.message}`);
+        }
+      }
+    }
 
     function startResponse() {
       if (responseStarted || res.headersSent) return;
@@ -309,35 +329,72 @@ async function handleAudioDownload(sourceUrl, res, clientIp) {
       res.setHeader("Cache-Control", "no-store");
     }
 
+    // Pipe: yt-dlp stdout -> ffmpeg stdin -> response
+    ytdlp.stdout.pipe(ffmpeg.stdin);
+
     ffmpeg.stdout.on("data", (chunk) => {
+      if (clientClosed || res.destroyed || res.writableEnded) return;
       startResponse();
       streamMeta.bytesOut += chunk.length;
-      res.write(chunk);
+      try {
+        res.write(chunk);
+      } catch (err) {
+        clientClosed = true;
+        console.warn(`[dl] client write failed: ${err.message}`);
+        killChildren();
+      }
+    });
+
+    res.on("finish", () => {
+      responseFinished = true;
+    });
+
+    res.on("error", (err) => {
+      clientClosed = true;
+      console.warn(`[dl] response error: ${err.message}`);
+      killChildren();
     });
 
     res.on("close", () => {
-      clientClosed = true;
       removeStream(streamId);
-      if (!ytdlp.killed) ytdlp.kill("SIGTERM");
-      if (!ffmpeg.killed) ffmpeg.kill("SIGTERM");
+      if (!responseFinished) {
+        clientClosed = true;
+        killChildren();
+      }
+    });
+
+    ytdlp.stdout.on("error", (err) => {
+      console.warn(`[dl] yt-dlp stdout error: ${err.message}`);
+    });
+
+    ffmpeg.stdin.on("error", (err) => {
+      if (err.code === "EPIPE") {
+        console.warn("[dl] ffmpeg stdin closed early (EPIPE)");
+      } else {
+        console.error("[dl] ffmpeg stdin error:", err.message);
+      }
+    });
+
+    ffmpeg.stdout.on("error", (err) => {
+      console.warn(`[dl] ffmpeg stdout error: ${err.message}`);
     });
 
     ytdlp.on("error", (err) => {
       console.error("[dl] yt-dlp spawn error:", err.message);
       if (!res.headersSent) res.status(502).send("Error 502");
-      resolve();
+      finishPromise();
     });
 
     ffmpeg.on("error", (err) => {
       console.error("[dl] ffmpeg spawn error:", err.message);
       if (!res.headersSent) res.status(502).send("Error 502");
-      resolve();
+      finishPromise();
     });
 
     ytdlp.on("close", (code) => {
       if (code !== 0) {
         console.error(`[dl] yt-dlp exited with code ${code}: ${ytdlpStderr.slice(0, 500)}`);
-        ffmpeg.stdin.end();
+        safeEndFfmpegStdin();
       } else {
         console.log("[dl] yt-dlp finished ok");
       }
@@ -345,7 +402,7 @@ async function handleAudioDownload(sourceUrl, res, clientIp) {
 
     ffmpeg.on("close", (code) => {
       if (clientClosed) {
-        resolve();
+        finishPromise();
         return;
       }
       if (code !== 0) {
@@ -358,7 +415,7 @@ async function handleAudioDownload(sourceUrl, res, clientIp) {
         console.log("[dl] ffmpeg transcode finished ok");
         if (!res.writableEnded) res.end();
       }
-      resolve();
+      finishPromise();
     });
   });
 }
