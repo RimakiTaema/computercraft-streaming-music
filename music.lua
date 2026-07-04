@@ -4,7 +4,8 @@ local api_base_url = "SetMe"
 -- X.X.1 => Minor change (usually no forced client update unless bugfix needed)
 -- X.1.X => Medium change (client update recommended if behavior changes)
 -- 1.X.X => Major change (client update required)
-local version = "4.0.0_vibe"
+local version = "4.1.1"
+local DOWNLOAD_REQUEST_TIMEOUT = 60
 
 local width, height = term.getSize()
 local tab = 1 -- 1=Player 2=Queue 3=Search 4=Settings
@@ -1642,7 +1643,7 @@ local function audioLoop()
 				playing_status = 0
 				needs_next_chunk = 1
 
-				http.request({ url = last_download_url, binary = true, timeout = 14400 })
+				http.request({ url = last_download_url, binary = true, timeout = DOWNLOAD_REQUEST_TIMEOUT })
 				is_loading = true
 				clearVisualizer()
 				decoder = require("cc.audio.dfpwm").make_decoder()
